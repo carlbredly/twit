@@ -66,10 +66,27 @@ export const VideoDownloader = () => {
       if (result.success && result.mediaItems && result.mediaItems.length > 0) {
         setMediaItems(result.mediaItems);
       } else {
-        setError(result.error || 'Aucun média trouvé. Le contenu est peut-être privé ou le lien est invalide.');
+        // Message d'erreur plus détaillé pour Instagram
+        if (linkInfo.platform === 'instagram') {
+          setError(
+            result.error || 
+            'Impossible de télécharger le média Instagram. ' +
+            'Vérifiez que :\n' +
+            '• Le compte est public\n' +
+            '• Le lien est correct\n' +
+            '• Le post n\'est pas supprimé'
+          );
+        } else {
+          setError(result.error || 'Aucun média trouvé. Le contenu est peut-être privé ou le lien est invalide.');
+        }
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Erreur inconnue');
+      const errorMessage = err instanceof Error ? err.message : 'Erreur inconnue';
+      if (linkInfo.platform === 'instagram') {
+        setError(`Erreur Instagram: ${errorMessage}. Essayez avec un autre lien ou vérifiez que le compte est public.`);
+      } else {
+        setError(errorMessage);
+      }
     } finally {
       setIsDownloading(false);
     }
