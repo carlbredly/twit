@@ -1,9 +1,11 @@
 export type Platform = 'instagram' | 'twitter' | 'snapchat' | 'unknown';
+export type MediaType = 'video' | 'image' | 'gif' | 'unknown';
 
 export interface LinkInfo {
   platform: Platform;
   isValid: boolean;
   url: string;
+  mediaType?: MediaType;
 }
 
 export const detectPlatform = (url: string): LinkInfo => {
