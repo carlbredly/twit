@@ -1,67 +1,73 @@
 import type { DownloadResponse } from './downloadService';
+import { isSafeHttpUrl, isSafeMediaUrl, normalizeInputUrl } from '../utils/security';
+
+export const extractSnapchatToken = (url: string): string | null => {
+  const normalized = normalizeInputUrl(url);
+  if (!isSafeHttpUrl(normalized)) return null;
+  const match = normalized.match(/snapchat\.com\/(?:t|spotlight|story)\/([A-Za-z0-9._-]+)/i);
+  return match?.[1] ?? null;
+};
+
+const firstSafeHttpsUrl = (candidates: Array<string | undefined>): string | undefined => {
+  return candidates.find((candidate) => candidate && isSafeMediaUrl(candidate));
+};
 
 export const downloadSnapchatMedia = async (url: string): Promise<DownloadResponse> => {
   try {
-    // Snapchat est plus complexe car les liens sont souvent temporaires
-    // Extraire l'identifiant du snap
-    const snapMatch = url.match(/snapchat\.com\/.*\/([^/?]+)/);
-    
-    if (!snapMatch) {
-      return { success: false, error: 'URL Snapchat invalide' };
+    const token = extractSnapchatToken(url);
+    if (!token) {
+      return { success: false, error: 'URL Snapchat invalide. Utilisez un lien Spotlight, Story ou /t/ public.' };
     }
 
-    // Les snaps Snapchat sont généralement privés et nécessitent une authentification
-    // Pour les stories publiques, on peut essayer d'extraire via proxy
-    
-    // Méthode 1: Essayer d'accéder via proxy CORS
-    const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(url)}`;
-    
+    const normalizedUrl = normalizeInputUrl(url);
+    const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(normalizedUrl)}`;
+    if (!isSafeHttpUrl(proxyUrl)) {
+      return { success: false, error: 'Proxy de lecture non sûr' };
+    }
+
     const response = await fetch(proxyUrl, {
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
       },
+      credentials: 'omit',
+      referrerPolicy: 'no-referrer',
     });
 
     if (response.ok) {
       const html = await response.text();
-      
-      // Essayer d'extraire les URLs de médias depuis le HTML
-      const videoMatch = html.match(/<video[^>]+src=["']([^"']+)["']/i) || 
-                          html.match(/"video_url":"([^"]+)"/) ||
-                          html.match(/videoUrl["']?\s*[:=]\s*["']([^"']+)["']/i);
-      
-      const imageMatch = html.match(/<img[^>]+src=["']([^"']+\.(jpg|jpeg|png|webp))["']/i) ||
-                         html.match(/"image_url":"([^"]+)"/) ||
-                         html.match(/imageUrl["']?\s*[:=]\s*["']([^"']+)["']/i);
 
-      if (videoMatch) {
-        const videoUrl = videoMatch[1];
+      const videoMatch =
+        html.match(/"contentUrl"\s*:\s*"(https:[^"]+\.mp4[^"]*)"/i) ||
+        html.match(/"video_url":"(https:[^"]+)"/) ||
+        html.match(/<video[^>]+src=["'](https:[^"']+)["']/i);
+
+      const imageMatch =
+        html.match(/"image_url":"(https:[^"]+)"/) ||
+        html.match(/<img[^>]+src=["'](https:[^"']+\.(?:jpg|jpeg|png|webp))["']/i);
+
+      const videoUrl = firstSafeHttpsUrl([videoMatch?.[1]]);
+      const imageUrl = firstSafeHttpsUrl([imageMatch?.[1]]);
+
+      if (videoUrl) {
         return {
           success: true,
-          mediaItems: [{
-            url: videoUrl,
-            type: 'video',
-          }],
+          mediaItems: [{ url: videoUrl, type: 'video', thumbnail: imageUrl }],
           mediaType: 'video',
         };
-      } else if (imageMatch) {
-        const imageUrl = imageMatch[1];
+      }
+
+      if (imageUrl) {
         return {
           success: true,
-          mediaItems: [{
-            url: imageUrl,
-            type: 'image',
-          }],
+          mediaItems: [{ url: imageUrl, type: 'image' }],
           mediaType: 'image',
         };
       }
     }
 
-    // Méthode 2: Utiliser l'API Snapchat si disponible (nécessite souvent authentification)
     return {
       success: false,
-      error: 'Les snaps Snapchat sont généralement privés et nécessitent une authentification. Seuls les contenus publics peuvent être téléchargés.',
+      error: 'Les snaps Snapchat sont généralement privés. Seuls les contenus publics Spotlight/Story peuvent être extraits.',
     };
   } catch (error) {
     return {
@@ -70,4 +76,3 @@ export const downloadSnapchatMedia = async (url: string): Promise<DownloadRespon
     };
   }
 };
-

@@ -1,86 +1,128 @@
 import type { DownloadResponse, MediaItem } from './downloadService';
+import { isSafeHttpUrl, isSafeMediaUrl, normalizeInputUrl } from '../utils/security';
+
+interface VideoVariant {
+  content_type?: string;
+  bitrate?: number;
+  url?: string;
+}
+
+interface FxTwitterVideo {
+  url?: string;
+  video_url?: string;
+  source?: { url?: string };
+  thumbnail_url?: string;
+  preview_image_url?: string;
+}
+
+interface FxTwitterPhoto {
+  url?: string;
+  media_url_https?: string;
+}
+
+interface FxTwitterGif {
+  video_info?: { variants?: VideoVariant[] };
+  media_url_https?: string;
+  preview_image_url?: string;
+}
+
+interface FxTwitterPayload {
+  tweet?: {
+    media?: {
+      videos?: FxTwitterVideo[];
+      photos?: FxTwitterPhoto[];
+      animated_gif?: FxTwitterGif[];
+    };
+  };
+}
+
+interface VxTwitterMedia {
+  type?: string;
+  url?: string;
+  media_url_https?: string;
+  video_info?: { variants?: VideoVariant[] };
+}
+
+const pickBestMp4 = (variants: VideoVariant[] | undefined): string | undefined => {
+  if (!variants?.length) return undefined;
+  const best = [...variants]
+    .filter((variant) => variant.content_type === 'video/mp4' && variant.url && isSafeMediaUrl(variant.url))
+    .sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0))[0];
+  return best?.url;
+};
+
+export const extractTweetId = (url: string): string | null => {
+  const normalized = normalizeInputUrl(url);
+  if (!isSafeHttpUrl(normalized)) return null;
+  const match = normalized.match(/(?:twitter\.com|x\.com)\/(?:[A-Za-z0-9_]+|i(?:\/web)?)\/status\/(\d+)/i);
+  return match?.[1] ?? null;
+};
+
+const collectFxTwitterItems = (data: FxTwitterPayload): MediaItem[] => {
+  const mediaItems: MediaItem[] = [];
+  const media = data.tweet?.media;
+  if (!media) return mediaItems;
+
+  for (const item of media.videos || []) {
+    const videoUrl = item.url || item.video_url || item.source?.url;
+    if (videoUrl && isSafeMediaUrl(videoUrl)) {
+      const thumbnail = item.thumbnail_url || item.preview_image_url;
+      mediaItems.push({
+        url: videoUrl,
+        type: 'video',
+        thumbnail: thumbnail && isSafeMediaUrl(thumbnail) ? thumbnail : undefined,
+      });
+    }
+  }
+
+  for (const item of media.photos || []) {
+    const imageUrl = item.url || item.media_url_https;
+    if (imageUrl && isSafeMediaUrl(imageUrl)) {
+      mediaItems.push({ url: imageUrl, type: 'image' });
+    }
+  }
+
+  for (const item of media.animated_gif || []) {
+    const gifUrl = pickBestMp4(item.video_info?.variants);
+    if (gifUrl) {
+      const thumbnail = item.media_url_https || item.preview_image_url;
+      mediaItems.push({
+        url: gifUrl,
+        type: 'gif',
+        thumbnail: thumbnail && isSafeMediaUrl(thumbnail) ? thumbnail : undefined,
+      });
+    }
+  }
+
+  return mediaItems;
+};
 
 export const downloadTwitterMedia = async (url: string): Promise<DownloadResponse> => {
   try {
-    // Extraire l'ID du tweet
-    const tweetIdMatch = url.match(/(?:twitter\.com|x\.com)\/\w+\/status\/(\d+)/);
-    if (!tweetIdMatch) {
+    const tweetId = extractTweetId(url);
+    if (!tweetId) {
       return { success: false, error: 'URL Twitter/X invalide' };
     }
 
-    const tweetId = tweetIdMatch[1];
-    
-    // Méthode 1: Utiliser l'API fxTwitter (meilleure option)
     try {
-      const apiUrl = `https://api.fxtwitter.com/status/${tweetId}`;
-      
-      const response = await fetch(apiUrl, {
-        headers: {
-          'Accept': 'application/json',
-        },
+      const response = await fetch(`https://api.fxtwitter.com/status/${tweetId}`, {
+        headers: { Accept: 'application/json' },
+        credentials: 'omit',
+        referrerPolicy: 'no-referrer',
       });
 
       if (response.ok) {
-        const data = await response.json();
-        
-        if (data.tweet && data.tweet.media) {
-          const mediaItems: MediaItem[] = [];
-          
-          // Vidéos
-          for (const media of data.tweet.media.videos || []) {
-            const videoUrl = media.url || media.video_url || media.source?.url;
-            if (videoUrl) {
-              mediaItems.push({
-                url: videoUrl,
-                type: 'video',
-                thumbnail: media.thumbnail_url || media.preview_image_url,
-              });
-            }
-          }
-          
-          // Images
-          for (const media of data.tweet.media.photos || []) {
-            const imageUrl = media.url || media.media_url_https;
-            if (imageUrl) {
-              mediaItems.push({
-                url: imageUrl,
-                type: 'image',
-              });
-            }
-          }
-
-          // GIFs animés
-          for (const media of data.tweet.media.animated_gif || []) {
-            if (media.video_info?.variants) {
-              const bestQuality = media.video_info.variants
-                .filter((v: any) => v.content_type === 'video/mp4')
-                .sort((a: any, b: any) => (b.bitrate || 0) - (a.bitrate || 0))[0];
-              
-              if (bestQuality) {
-                mediaItems.push({
-                  url: bestQuality.url,
-                  type: 'gif',
-                  thumbnail: media.media_url_https || media.preview_image_url,
-                });
-              }
-            }
-          }
-
-          if (mediaItems.length > 0) {
-            return {
-              success: true,
-              mediaItems,
-              mediaType: mediaItems[0].type,
-            };
-          }
+        const data = (await response.json()) as FxTwitterPayload;
+        const mediaItems = collectFxTwitterItems(data);
+        if (mediaItems.length > 0) {
+          return { success: true, mediaItems, mediaType: mediaItems[0].type };
         }
       }
-    } catch (e) {
-      // Continuer avec la méthode fallback
+    } catch {
+      // Continuer avec la méthode de repli
     }
 
-    // Méthode 2: Utiliser vxTwitter comme alternative
-    return await downloadTwitterFallback(url, tweetId);
+    return await downloadTwitterFallback(tweetId);
   } catch (error) {
     return {
       success: false,
@@ -89,75 +131,63 @@ export const downloadTwitterMedia = async (url: string): Promise<DownloadRespons
   }
 };
 
-const downloadTwitterFallback = async (_url: string, tweetId: string): Promise<DownloadResponse> => {
+const downloadTwitterFallback = async (tweetId: string): Promise<DownloadResponse> => {
   try {
-    // Méthode alternative: utiliser twdown ou extraction directe
-    const extractUrl = `https://api.vxtwitter.com/tweet/${tweetId}`;
-    
-    const response = await fetch(extractUrl, {
-      headers: {
-        'Accept': 'application/json',
-      },
+    const response = await fetch(`https://api.vxtwitter.com/tweet/${tweetId}`, {
+      headers: { Accept: 'application/json' },
+      credentials: 'omit',
+      referrerPolicy: 'no-referrer',
     });
 
-    if (response.ok) {
-      const data = await response.json();
-      
-      if (data.media) {
-        const mediaItems: MediaItem[] = [];
-        
-        for (const media of data.media) {
-          if (media.type === 'video') {
-            // Trouver la meilleure qualité vidéo
-            if (media.video_info && media.video_info.variants) {
-              const bestVariant = media.video_info.variants
-                .filter((v: any) => v.content_type === 'video/mp4')
-                .sort((a: any, b: any) => (b.bitrate || 0) - (a.bitrate || 0))[0];
-              
-              if (bestVariant) {
-                mediaItems.push({
-                  url: bestVariant.url,
-                  type: 'video',
-                  thumbnail: media.media_url_https,
-                });
-              }
-            }
-          } else if (media.type === 'photo') {
-            mediaItems.push({
-              url: media.media_url_https || media.url,
-              type: 'image',
-            });
-          } else if (media.type === 'animated_gif') {
-            if (media.video_info?.variants) {
-              const bestVariant = media.video_info.variants[0];
-              mediaItems.push({
-                url: bestVariant.url,
-                type: 'gif',
-                thumbnail: media.media_url_https,
-              });
-            }
-          }
-        }
+    if (!response.ok) {
+      return {
+        success: false,
+        error: 'Impossible de télécharger le média Twitter/X. Le tweet est peut-être privé ou supprimé.',
+      };
+    }
 
-        if (mediaItems.length > 0) {
-          return {
-            success: true,
-            mediaItems,
-            mediaType: mediaItems[0].type,
-          };
+    const data = (await response.json()) as { media?: VxTwitterMedia[] };
+    const mediaItems: MediaItem[] = [];
+
+    for (const media of data.media || []) {
+      if (media.type === 'video') {
+        const videoUrl = pickBestMp4(media.video_info?.variants);
+        if (videoUrl) {
+          mediaItems.push({
+            url: videoUrl,
+            type: 'video',
+            thumbnail: media.media_url_https && isSafeMediaUrl(media.media_url_https) ? media.media_url_https : undefined,
+          });
+        }
+      } else if (media.type === 'photo') {
+        const imageUrl = media.media_url_https || media.url;
+        if (imageUrl && isSafeMediaUrl(imageUrl)) {
+          mediaItems.push({ url: imageUrl, type: 'image' });
+        }
+      } else if (media.type === 'animated_gif') {
+        const gifUrl = pickBestMp4(media.video_info?.variants) || media.video_info?.variants?.[0]?.url;
+        if (gifUrl && isSafeMediaUrl(gifUrl)) {
+          mediaItems.push({
+            url: gifUrl,
+            type: 'gif',
+            thumbnail: media.media_url_https && isSafeMediaUrl(media.media_url_https) ? media.media_url_https : undefined,
+          });
         }
       }
+    }
+
+    if (mediaItems.length > 0) {
+      return { success: true, mediaItems, mediaType: mediaItems[0].type };
     }
 
     return {
       success: false,
       error: 'Impossible de télécharger le média Twitter/X. Le tweet est peut-être privé ou supprimé.',
     };
-  } catch (error) {
+  } catch {
     return {
       success: false,
       error: 'Erreur lors de l\'extraction du média Twitter/X',
     };
   }
 };
-
