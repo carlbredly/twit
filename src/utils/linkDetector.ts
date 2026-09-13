@@ -1,59 +1,134 @@
-export type Platform = 'instagram' | 'twitter' | 'snapchat' | 'unknown';
+import { hostnameMatches, validatePublicHttpUrl, type UrlValidationResult } from './security';
+
+export type Platform = 'instagram' | 'twitter' | 'snapchat' | 'tiktok' | 'unknown';
 export type MediaType = 'video' | 'image' | 'gif' | 'unknown';
 
 export interface LinkInfo {
   platform: Platform;
   isValid: boolean;
   url: string;
+  canonicalUrl?: string;
   mediaType?: MediaType;
+  error?: string;
 }
 
-export const detectPlatform = (url: string): LinkInfo => {
-  if (!url || url.trim() === '') {
-    return { platform: 'unknown', isValid: false, url };
+const INSTAGRAM_HOSTS = ['instagram.com', 'instagr.am'] as const;
+const TWITTER_HOSTS = ['twitter.com', 'x.com'] as const;
+const SNAPCHAT_HOSTS = ['snapchat.com'] as const;
+const TIKTOK_HOSTS = ['tiktok.com'] as const;
+
+const INSTAGRAM_PATH = /^\/(?:p|reel|reels|tv|stories)\/[A-Za-z0-9._-]+/i;
+const INSTAGRAM_SHARE_PATH = /^\/share\/(?:p|reel)\/[A-Za-z0-9._-]+/i;
+const TWITTER_PATH = /^\/(?:[A-Za-z0-9_]+|i)\/status\/\d+/i;
+const SNAPCHAT_PATH = /^\/(?:t|spotlight|story)\/[A-Za-z0-9._-]+/i;
+const TIKTOK_VIDEO_PATH = /^\/@[^/]+\/video\/\d+/i;
+const TIKTOK_SHORT_PATH = /^\/(?:t|v)\/[A-Za-z0-9]+/i;
+const TIKTOK_PHOTO_PATH = /^\/@[^/]+\/photo\/\d+/i;
+
+export function detectPlatform(url: string): LinkInfo {
+  const validation = validatePublicHttpUrl(url);
+  if (!validation.ok) {
+    return {
+      platform: 'unknown',
+      isValid: false,
+      url,
+      error: validation.error,
+    };
   }
 
-  const normalizedUrl = url.trim().toLowerCase();
+  return classifyUrl(validation.url, url);
+}
 
-  // Instagram patterns
-  const instagramPatterns = [
-    /instagram\.com\/(p|reel|tv)\//,
-    /instagram\.com\/.*\/.*/,
-  ];
+function classifyUrl(parsed: URL, original: string): LinkInfo {
+  const pathname = parsed.pathname;
 
-  // Twitter/X patterns
-  const twitterPatterns = [
-    /(twitter\.com|x\.com)\/.*\/status\//,
-    /(twitter\.com|x\.com)\/.*\/video\//,
-  ];
-
-  // Snapchat patterns
-  const snapchatPatterns = [
-    /snapchat\.com\/add\//,
-    /snapchat\.com\/t\//,
-    /snapchat\.com\/story\//,
-  ];
-
-  for (const pattern of instagramPatterns) {
-    if (pattern.test(normalizedUrl)) {
-      return { platform: 'instagram', isValid: true, url };
-    }
+  if (hostnameMatches(parsed.hostname, INSTAGRAM_HOSTS)) {
+    const valid = INSTAGRAM_PATH.test(pathname) || INSTAGRAM_SHARE_PATH.test(pathname);
+    return {
+      platform: 'instagram',
+      isValid: valid,
+      url: original,
+      canonicalUrl: parsed.href,
+      error: valid ? undefined : 'Lien Instagram invalide. Utilisez un post, reel ou story.',
+    };
   }
 
-  for (const pattern of twitterPatterns) {
-    if (pattern.test(normalizedUrl)) {
-      return { platform: 'twitter', isValid: true, url };
-    }
+  if (hostnameMatches(parsed.hostname, TWITTER_HOSTS)) {
+    const valid = TWITTER_PATH.test(pathname);
+    return {
+      platform: 'twitter',
+      isValid: valid,
+      url: original,
+      canonicalUrl: parsed.href,
+      error: valid ? undefined : 'Lien Twitter/X invalide. Format attendu : …/status/ID',
+    };
   }
 
-  for (const pattern of snapchatPatterns) {
-    if (pattern.test(normalizedUrl)) {
-      return { platform: 'snapchat', isValid: true, url };
-    }
+  if (hostnameMatches(parsed.hostname, SNAPCHAT_HOSTS)) {
+    const valid = SNAPCHAT_PATH.test(pathname);
+    return {
+      platform: 'snapchat',
+      isValid: valid,
+      url: original,
+      canonicalUrl: parsed.href,
+      error: valid ? undefined : 'Lien Snapchat invalide. Seuls les snaps/stories publics sont acceptés.',
+    };
   }
 
-  return { platform: 'unknown', isValid: false, url };
-};
+  if (hostnameMatches(parsed.hostname, TIKTOK_HOSTS)) {
+    const valid =
+      TIKTOK_VIDEO_PATH.test(pathname) ||
+      TIKTOK_SHORT_PATH.test(pathname) ||
+      TIKTOK_PHOTO_PATH.test(pathname);
+    return {
+      platform: 'tiktok',
+      isValid: valid,
+      url: original,
+      canonicalUrl: parsed.href,
+      error: valid ? undefined : 'Lien TikTok invalide. Utilisez une vidéo, photo ou un lien court.',
+    };
+  }
+
+  return {
+    platform: 'unknown',
+    isValid: false,
+    url: original,
+    canonicalUrl: parsed.href,
+    error: 'Plateforme non reconnue',
+  };
+}
+
+export function extractTweetId(url: string): string | null {
+  const parsed = parseIfAllowed(url, TWITTER_HOSTS);
+  if (!parsed) return null;
+  const match = parsed.pathname.match(/\/status\/(\d+)/i);
+  return match?.[1] ?? null;
+}
+
+export function extractInstagramShortcode(url: string): string | null {
+  const parsed = parseIfAllowed(url, INSTAGRAM_HOSTS);
+  if (!parsed) return null;
+  const match = parsed.pathname.match(/\/(?:p|reel|reels|tv|stories|share\/(?:p|reel))\/([A-Za-z0-9._-]+)/i);
+  return match?.[1] ?? null;
+}
+
+export function extractTikTokVideoId(url: string): string | null {
+  const parsed = parseIfAllowed(url, TIKTOK_HOSTS);
+  if (!parsed) return null;
+  const match = parsed.pathname.match(/\/(?:video|photo)\/(\d+)/i);
+  return match?.[1] ?? null;
+}
+
+function parseIfAllowed(url: string, hosts: readonly string[]): URL | null {
+  const validation = validatePublicHttpUrl(url);
+  if (!validation.ok) return null;
+  if (!hostnameMatches(validation.url.hostname, hosts)) return null;
+  return validation.url;
+}
+
+export function validateSocialUrl(url: string): UrlValidationResult {
+  return validatePublicHttpUrl(url);
+}
 
 export const getPlatformIcon = (platform: Platform): string => {
   switch (platform) {
@@ -63,6 +138,8 @@ export const getPlatformIcon = (platform: Platform): string => {
       return '🐦';
     case 'snapchat':
       return '👻';
+    case 'tiktok':
+      return '🎵';
     default:
       return '🔗';
   }
@@ -76,6 +153,8 @@ export const getPlatformName = (platform: Platform): string => {
       return 'Twitter/X';
     case 'snapchat':
       return 'Snapchat';
+    case 'tiktok':
+      return 'TikTok';
     default:
       return 'Inconnu';
   }
@@ -89,8 +168,9 @@ export const getPlatformColor = (platform: Platform): string => {
       return 'bg-gradient-to-r from-blue-400 to-blue-600';
     case 'snapchat':
       return 'bg-gradient-to-r from-yellow-400 to-yellow-600';
+    case 'tiktok':
+      return 'bg-gradient-to-r from-gray-800 to-rose-600';
     default:
       return 'bg-gray-500';
   }
 };
-
