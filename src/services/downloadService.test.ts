@@ -77,14 +77,21 @@ describe('triggerDownload', () => {
 
   it('télécharge un média autorisé et déclenche un lien', async () => {
     const click = vi.fn();
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:mock');
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
     vi.stubGlobal(
       'fetch',
-      vi.fn(async () =>
-        new Response(new Blob(['video-bytes'], { type: 'video/mp4' }), {
-          status: 200,
-          headers: { 'content-type': 'video/mp4', 'content-length': '11' },
-        })
-      )
+      vi.fn(async () => ({
+        ok: true,
+        headers: {
+          get: (name: string) => {
+            if (name === 'content-type') return 'video/mp4';
+            if (name === 'content-length') return '11';
+            return null;
+          },
+        },
+        blob: async () => ({ size: 11, type: 'video/mp4' }),
+      }))
     );
 
     const createElement = document.createElement.bind(document);

@@ -30,7 +30,15 @@ export type UrlValidationResult =
   | { ok: true; url: URL }
   | { ok: false; error: string };
 
-const CONTROL_CHARS = /[\u0000-\u001F\u007F]/;
+function hasForbiddenCharacters(value: string): boolean {
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code <= 31 || code === 127) {
+      return true;
+    }
+  }
+  return false;
+}
 
 export function validatePublicHttpUrl(raw: string, options?: { httpsOnly?: boolean }): UrlValidationResult {
   if (typeof raw !== 'string') {
@@ -44,7 +52,7 @@ export function validatePublicHttpUrl(raw: string, options?: { httpsOnly?: boole
   if (trimmed.length > MAX_URL_LENGTH) {
     return { ok: false, error: 'URL trop longue' };
   }
-  if (CONTROL_CHARS.test(trimmed) || /[\r\n]/.test(trimmed)) {
+  if (hasForbiddenCharacters(trimmed)) {
     return { ok: false, error: 'Caractères interdits dans l’URL' };
   }
 
@@ -156,7 +164,7 @@ export function hostnameMatches(hostname: string, allowed: readonly string[]): b
 export function sanitizeFilename(name: string): string {
   const cleaned = name
     .normalize('NFKD')
-    .replace(/[^\w.\-]+/g, '-')
+    .replace(/[^\w.-]+/g, '-')
     .replace(/\.+/g, '.')
     .replace(/^[.-]+/, '')
     .replace(/[.-]+$/, '')

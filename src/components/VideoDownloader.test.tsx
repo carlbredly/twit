@@ -1,6 +1,6 @@
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { VideoDownloader } from './VideoDownloader';
 
 vi.mock('../services/downloadService', () => ({
@@ -13,10 +13,6 @@ vi.mock('../services/downloadService', () => ({
   triggerDownload: vi.fn(async () => undefined),
 }));
 
-afterEach(() => {
-  localStorage.clear();
-});
-
 describe('VideoDownloader', () => {
   it('affiche le support TikTok et détecte un lien Twitter', async () => {
     const user = userEvent.setup();
@@ -28,16 +24,16 @@ describe('VideoDownloader', () => {
     expect(screen.getByText('Twitter/X détecté')).toBeTruthy();
   });
 
-  it('bloque un lien javascript et affiche une erreur', async () => {
+  it('bloque un lien javascript et laisse le bouton désactivé', async () => {
     const user = userEvent.setup();
     render(<VideoDownloader />);
 
     const input = screen.getByLabelText('Lien du média');
+    await user.clear(input);
     await user.type(input, 'javascript:alert(1)');
-    expect(screen.getByRole('button', { name: 'Rechercher et télécharger' })).toHaveProperty(
-      'disabled',
-      true
-    );
+    const searchButton = screen.getByRole('button', { name: 'Rechercher et télécharger' });
+    expect(searchButton).toHaveProperty('disabled', true);
+    expect(screen.queryByText('Twitter/X détecté')).toBeNull();
   });
 
   it('bascule le thème sombre', async () => {
