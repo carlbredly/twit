@@ -1,73 +1,89 @@
-import type { DownloadResponse } from './downloadService';
+import { detectPlatform } from '../utils/linkDetector';
+import { fetchValidated } from '../utils/http';
+import { isAbortError, validatePublicHttpUrl } from '../utils/security';
+import type { DownloadResponse } from '../types/media';
+import { toSafeMediaUrl } from './mediaParsers';
 
-export const downloadSnapchatMedia = async (url: string): Promise<DownloadResponse> => {
+export const downloadSnapchatMedia = async (
+  url: string,
+  signal?: AbortSignal
+): Promise<DownloadResponse> => {
+  const validation = validatePublicHttpUrl(url);
+  if (!validation.ok) {
+    return { success: false, error: validation.error, platform: 'snapchat' };
+  }
+
+  const info = detectPlatform(validation.url.href);
+  if (!info.isValid || info.platform !== 'snapchat') {
+    return { success: false, error: 'URL Snapchat invalide', platform: 'snapchat' };
+  }
+
   try {
-    // Snapchat est plus complexe car les liens sont souvent temporaires
-    // Extraire l'identifiant du snap
-    const snapMatch = url.match(/snapchat\.com\/.*\/([^/?]+)/);
-    
-    if (!snapMatch) {
-      return { success: false, error: 'URL Snapchat invalide' };
+    const proxyTarget = `https://corsproxy.io/?${encodeURIComponent(validation.url.href)}`;
+    const proxyCheck = validatePublicHttpUrl(proxyTarget);
+    if (!proxyCheck.ok) {
+      return { success: false, error: 'Proxy Snapchat invalide', platform: 'snapchat' };
     }
 
-    // Les snaps Snapchat sont généralement privés et nécessitent une authentification
-    // Pour les stories publiques, on peut essayer d'extraire via proxy
-    
-    // Méthode 1: Essayer d'accéder via proxy CORS
-    const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(url)}`;
-    
-    const response = await fetch(proxyUrl, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-      },
+    const response = await fetchValidated(proxyCheck.url.href, {
+      headers: { Accept: 'text/html,application/xhtml+xml' },
+      signal,
     });
 
-    if (response.ok) {
+    if (response?.ok) {
       const html = await response.text();
-      
-      // Essayer d'extraire les URLs de médias depuis le HTML
-      const videoMatch = html.match(/<video[^>]+src=["']([^"']+)["']/i) || 
-                          html.match(/"video_url":"([^"]+)"/) ||
-                          html.match(/videoUrl["']?\s*[:=]\s*["']([^"']+)["']/i);
-      
-      const imageMatch = html.match(/<img[^>]+src=["']([^"']+\.(jpg|jpeg|png|webp))["']/i) ||
-                         html.match(/"image_url":"([^"]+)"/) ||
-                         html.match(/imageUrl["']?\s*[:=]\s*["']([^"']+)["']/i);
-
-      if (videoMatch) {
-        const videoUrl = videoMatch[1];
+      const extracted = extractPublicMediaFromHtml(html);
+      if (extracted) {
         return {
           success: true,
-          mediaItems: [{
-            url: videoUrl,
-            type: 'video',
-          }],
-          mediaType: 'video',
-        };
-      } else if (imageMatch) {
-        const imageUrl = imageMatch[1];
-        return {
-          success: true,
-          mediaItems: [{
-            url: imageUrl,
-            type: 'image',
-          }],
-          mediaType: 'image',
+          mediaItems: [extracted],
+          mediaType: extracted.type,
+          platform: 'snapchat',
         };
       }
     }
 
-    // Méthode 2: Utiliser l'API Snapchat si disponible (nécessite souvent authentification)
     return {
       success: false,
-      error: 'Les snaps Snapchat sont généralement privés et nécessitent une authentification. Seuls les contenus publics peuvent être téléchargés.',
+      error:
+        'Les snaps Snapchat sont généralement privés et nécessitent une authentification. Seuls les contenus publics peuvent être téléchargés.',
+      platform: 'snapchat',
     };
   } catch (error) {
+    if (isAbortError(error)) {
+      return { success: false, error: 'Recherche annulée', platform: 'snapchat' };
+    }
     return {
       success: false,
       error: error instanceof Error ? error.message : 'Erreur lors du téléchargement Snapchat',
+      platform: 'snapchat',
     };
   }
 };
 
+export function extractPublicMediaFromHtml(html: string) {
+  if (typeof html !== 'string' || html.length > 2_000_000) return null;
+
+  const videoMatch =
+    html.match(/"contentUrl"\s*:\s*"(https:[^"]+\.mp4[^"]*)"/i) ||
+    html.match(/"video_url"\s*:\s*"(https:[^"]+)"/i);
+  const imageMatch =
+    html.match(/"image"\s*:\s*"(https:[^"]+\.(?:jpg|jpeg|png|webp)[^"]*)"/i) ||
+    html.match(/"image_url"\s*:\s*"(https:[^"]+)"/i);
+
+  const videoUrl = videoMatch ? toSafeMediaUrl(unescapeJsonUrl(videoMatch[1])) : null;
+  if (videoUrl) {
+    return { url: videoUrl, type: 'video' as const };
+  }
+
+  const imageUrl = imageMatch ? toSafeMediaUrl(unescapeJsonUrl(imageMatch[1])) : null;
+  if (imageUrl) {
+    return { url: imageUrl, type: 'image' as const };
+  }
+
+  return null;
+}
+
+function unescapeJsonUrl(value: string): string {
+  return value.replace(/\\u0026/g, '&').replace(/\\\//g, '/');
+}

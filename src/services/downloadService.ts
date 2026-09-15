@@ -1,34 +1,46 @@
-import type { Platform, MediaType } from '../utils/linkDetector';
+import type { DownloadResponse, MediaItem } from '../types/media';
+import type { MediaType, Platform } from '../utils/linkDetector';
+import { fetchValidated } from '../utils/http';
+import {
+  extensionForMediaType,
+  isAbortError,
+  isAllowedMediaContentType,
+  MAX_MEDIA_BYTES,
+  parseContentLength,
+  sanitizeFilename,
+  validatePublicHttpUrl,
+} from '../utils/security';
 import { downloadInstagramMedia } from './instagramService';
-import { downloadTwitterMedia } from './twitterService';
 import { downloadSnapchatMedia } from './snapchatService';
+import { downloadTikTokMedia } from './tiktokService';
+import { downloadTwitterMedia } from './twitterService';
 
-export interface MediaItem {
-  url: string;
-  type: MediaType;
-  thumbnail?: string;
-}
-
-export interface DownloadResponse {
-  success: boolean;
-  mediaItems?: MediaItem[];
-  error?: string;
-  platform?: Platform;
-  mediaType?: MediaType;
-}
+export type { DownloadResponse, MediaItem };
 
 export const downloadMedia = async (
   url: string,
-  platform: Platform
+  platform: Platform,
+  signal?: AbortSignal
 ): Promise<DownloadResponse> => {
+  const validation = validatePublicHttpUrl(url);
+  if (!validation.ok) {
+    return { success: false, error: validation.error, platform };
+  }
+
+  if (signal?.aborted) {
+    return { success: false, error: 'Recherche annulée', platform };
+  }
+
   try {
     switch (platform) {
       case 'instagram':
-        return await downloadInstagramMedia(url);
+        return await downloadInstagramMedia(validation.url.href, signal);
       case 'twitter':
-        return await downloadTwitterMedia(url);
+        return await downloadTwitterMedia(validation.url.href, signal);
       case 'snapchat':
-        return await downloadSnapchatMedia(url);
+        return await downloadSnapchatMedia(validation.url.href, signal);
+      case 'tiktok':
+        return await downloadTikTokMedia(validation.url.href, signal);
       default:
         return {
           success: false,
@@ -37,6 +49,9 @@ export const downloadMedia = async (
         };
     }
   } catch (error) {
+    if (isAbortError(error) || signal?.aborted) {
+      return { success: false, error: 'Recherche annulée', platform };
+    }
     return {
       success: false,
       error: error instanceof Error ? error.message : 'Erreur inconnue',
@@ -45,35 +60,59 @@ export const downloadMedia = async (
   }
 };
 
-export const triggerDownload = async (mediaUrl: string, filename: string, type: MediaType = 'video') => {
+export const triggerDownload = async (
+  mediaUrl: string,
+  filename: string,
+  type: MediaType = 'video'
+) => {
+  const validation = validatePublicHttpUrl(mediaUrl, { httpsOnly: true });
+  if (!validation.ok) {
+    throw new Error(validation.error);
+  }
+
+  const safeName = sanitizeFilename(filename);
+  const response = await fetchValidated(validation.url.href, { redirect: 'follow' }, { httpsOnly: true });
+
+  if (!response) {
+    throw new Error('Téléchargement impossible');
+  }
+  if (!response.ok) {
+    throw new Error(`Téléchargement impossible (${response.status})`);
+  }
+
+  const finalUrl = validatePublicHttpUrl(response.url, { httpsOnly: true });
+  if (!finalUrl.ok) {
+    throw new Error('Redirection vers un hôte non autorisé');
+  }
+
+  const contentLength = parseContentLength(response.headers.get('content-length'));
+  if (contentLength !== null && contentLength > MAX_MEDIA_BYTES) {
+    throw new Error('Fichier trop volumineux');
+  }
+  if (!isAllowedMediaContentType(response.headers.get('content-type'))) {
+    throw new Error('Type de fichier non autorisé');
+  }
+
+  const blob = await response.blob();
+  if (blob.size > MAX_MEDIA_BYTES) {
+    throw new Error('Fichier trop volumineux');
+  }
+  if (!isAllowedMediaContentType(blob.type || null)) {
+    throw new Error('Type de fichier non autorisé');
+  }
+
+  const extension = extensionForMediaType(type, blob.type || response.headers.get('content-type') || undefined);
+  const blobUrl = URL.createObjectURL(blob);
+
   try {
-    // Pour les URLs distantes, on doit d'abord les récupérer
-    const response = await fetch(mediaUrl);
-    const blob = await response.blob();
-    const blobUrl = URL.createObjectURL(blob);
-    
     const link = document.createElement('a');
     link.href = blobUrl;
-    
-    // Déterminer l'extension du fichier
-    const extension = type === 'video' ? 'mp4' : type === 'gif' ? 'gif' : 'jpg';
-    link.download = `${filename || 'media'}.${extension}`;
-    
+    link.download = `${safeName}.${extension}`;
+    link.rel = 'noopener noreferrer';
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
-    
-    // Nettoyer l'URL du blob après un délai
-    setTimeout(() => URL.revokeObjectURL(blobUrl), 100);
-  } catch (error) {
-    // Fallback: téléchargement direct (peut ne pas fonctionner à cause de CORS)
-    const link = document.createElement('a');
-    link.href = mediaUrl;
-    link.download = filename || 'media';
-    link.target = '_blank';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+  } finally {
+    window.setTimeout(() => URL.revokeObjectURL(blobUrl), 100);
   }
 };
-
