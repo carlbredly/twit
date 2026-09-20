@@ -15,23 +15,41 @@ const parseResolutionFromUrl = (url: string): { width?: number; height?: number 
   return { width: Number(match[1]), height: Number(match[2]) };
 };
 
+const qualityTag = (width?: number, height?: number, bitrate?: number): string | undefined => {
+  if (width && height) {
+    // Twitter labels follow the short edge (720p, 360p, 180p).
+    const shortEdge = Math.min(width, height);
+    if (shortEdge >= 1080) return '1080p';
+    if (shortEdge >= 720) return '720p';
+    if (shortEdge >= 480) return '480p';
+    if (shortEdge >= 360) return '360p';
+    if (shortEdge >= 240) return '240p';
+    return `${shortEdge}p`;
+  }
+  if (bitrate && bitrate >= 2_000_000) return '720p';
+  if (bitrate && bitrate >= 800_000) return '360p';
+  if (bitrate) return '240p';
+  return undefined;
+};
+
 const qualityLabel = (
   type: MediaType,
   width?: number,
   height?: number,
   bitrate?: number
 ): string => {
-  if (type === 'image') return 'Download Image';
+  if (type === 'image') return 'Image originale';
   if (type === 'gif') {
-    if (width && height) return `Download GIF ${width}x${height}`;
-    return 'Download GIF';
+    if (width && height) return `GIF ${width}×${height}`;
+    return 'GIF';
   }
+  const tag = qualityTag(width, height, bitrate);
   if (width && height) {
     const isHd = Math.max(width, height) >= 720;
-    return isHd ? `Download HD ${width}x${height}` : `Download ${width}x${height}`;
+    return isHd ? `${width}×${height} (HD)` : `${width}×${height}`;
   }
-  if (bitrate && bitrate >= 2_000_000) return 'Download HD';
-  return 'Download Video';
+  if (tag) return tag;
+  return 'Vidéo';
 };
 
 const mp4VariantsFromList = (variants: VideoVariant[] | undefined): VideoVariant[] => {
@@ -84,23 +102,57 @@ export const downloadTwitterMedia = async (url: string): Promise<DownloadRespons
                   width,
                   height,
                   bitrate: variant.bitrate,
+                  quality: qualityTag(width, height, variant.bitrate),
                   label: qualityLabel(type, width, height, variant.bitrate),
                 });
               }
             } else {
-              const videoUrl = item.url || item.video_url || item.source?.url;
-              if (videoUrl) {
-                const fromUrl = parseResolutionFromUrl(videoUrl);
-                const width = item.width || fromUrl.width;
-                const height = item.height || fromUrl.height;
-                mediaItems.push({
-                  url: videoUrl,
-                  type,
-                  thumbnail: item.thumbnail_url || item.preview_image_url,
-                  width,
-                  height,
-                  label: qualityLabel(type, width, height),
-                });
+              // Also try fxTwitter "formats" list (mp4 containers) when variants are missing
+              const formats = (item.formats || []) as Array<{
+                url?: string;
+                bitrate?: number;
+                container?: string;
+              }>;
+              const mp4Formats = formats.filter(
+                (f) => f.url && (f.container === 'mp4' || f.url.includes('.mp4'))
+              );
+
+              if (mp4Formats.length > 0) {
+                const sorted = [...mp4Formats].sort(
+                  (a, b) => (b.bitrate || 0) - (a.bitrate || 0)
+                );
+                for (const format of sorted) {
+                  if (!format.url) continue;
+                  const fromUrl = parseResolutionFromUrl(format.url);
+                  const width = fromUrl.width || item.width;
+                  const height = fromUrl.height || item.height;
+                  mediaItems.push({
+                    url: format.url,
+                    type,
+                    thumbnail: item.thumbnail_url || item.preview_image_url,
+                    width,
+                    height,
+                    bitrate: format.bitrate,
+                    quality: qualityTag(width, height, format.bitrate),
+                    label: qualityLabel(type, width, height, format.bitrate),
+                  });
+                }
+              } else {
+                const videoUrl = item.url || item.video_url || item.source?.url;
+                if (videoUrl) {
+                  const fromUrl = parseResolutionFromUrl(videoUrl);
+                  const width = item.width || fromUrl.width;
+                  const height = item.height || fromUrl.height;
+                  mediaItems.push({
+                    url: videoUrl,
+                    type,
+                    thumbnail: item.thumbnail_url || item.preview_image_url,
+                    width,
+                    height,
+                    quality: qualityTag(width, height),
+                    label: qualityLabel(type, width, height),
+                  });
+                }
               }
             }
           }
@@ -111,7 +163,8 @@ export const downloadTwitterMedia = async (url: string): Promise<DownloadRespons
               mediaItems.push({
                 url: imageUrl,
                 type: 'image',
-                label: 'Download Image',
+                quality: 'orig',
+                label: qualityLabel('image'),
               });
             }
           }
@@ -127,6 +180,7 @@ export const downloadTwitterMedia = async (url: string): Promise<DownloadRespons
                 thumbnail: item.thumbnail_url || item.media_url_https || item.preview_image_url,
                 width: fromUrl.width,
                 height: fromUrl.height,
+                quality: qualityTag(fromUrl.width, fromUrl.height),
                 label: qualityLabel('gif', fromUrl.width, fromUrl.height),
               });
             }
@@ -185,6 +239,7 @@ const downloadTwitterFallback = async (tweetId: string): Promise<DownloadRespons
               thumbnail: media.thumbnail_url,
               width: fromUrl.width,
               height: fromUrl.height,
+              quality: qualityTag(fromUrl.width, fromUrl.height),
               label: qualityLabel('video', fromUrl.width, fromUrl.height),
             });
           } else if (media.type === 'gif' || media.type === 'animated_gif') {
@@ -192,13 +247,14 @@ const downloadTwitterFallback = async (tweetId: string): Promise<DownloadRespons
               url: media.url,
               type: 'gif',
               thumbnail: media.thumbnail_url,
-              label: 'Download GIF',
+              label: qualityLabel('gif'),
             });
           } else if (media.type === 'image' || media.type === 'photo') {
             mediaItems.push({
               url: media.url,
               type: 'image',
-              label: 'Download Image',
+              quality: 'orig',
+              label: qualityLabel('image'),
             });
           }
         }
@@ -216,6 +272,7 @@ const downloadTwitterFallback = async (tweetId: string): Promise<DownloadRespons
             type,
             width: fromUrl.width,
             height: fromUrl.height,
+            quality: qualityTag(fromUrl.width, fromUrl.height),
             label: qualityLabel(type, fromUrl.width, fromUrl.height),
           });
         }

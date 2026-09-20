@@ -8,8 +8,10 @@ export interface MediaItem {
   url: string;
   type: MediaType;
   thumbnail?: string;
-  /** Label shown on the download button, e.g. "Download HD 1280x720" */
+  /** Human label, e.g. "1280×720 (HD)" */
   label?: string;
+  /** Short quality tag, e.g. "720p" */
+  quality?: string;
   width?: number;
   height?: number;
   bitrate?: number;

@@ -74,16 +74,19 @@ describe('downloadTwitterMedia', () => {
     expect(result.success).toBe(true);
     // 3 video qualities + 1 gif + 1 image
     expect(result.mediaItems).toHaveLength(5);
-    expect(result.mediaItems?.[0].label).toBe('Download HD 1280x720');
-    expect(result.mediaItems?.[1].label).toBe('Download 640x360');
-    expect(result.mediaItems?.[2].label).toBe('Download 320x180');
+    expect(result.mediaItems?.[0].label).toBe('1280×720 (HD)');
+    expect(result.mediaItems?.[0].quality).toBe('720p');
+    expect(result.mediaItems?.[1].label).toBe('640×360');
+    expect(result.mediaItems?.[1].quality).toBe('360p');
+    expect(result.mediaItems?.[2].label).toBe('320×180');
+    expect(result.mediaItems?.[2].quality).toBe('180p');
     expect(result.mediaItems?.[3]).toMatchObject({
       type: 'gif',
       url: 'https://video.twimg.com/tweet_video/gif.mp4',
     });
     expect(result.mediaItems?.[4]).toMatchObject({
       type: 'image',
-      label: 'Download Image',
+      label: 'Image originale',
     });
   });
 
@@ -116,7 +119,8 @@ describe('downloadTwitterMedia', () => {
     const result = await downloadTwitterMedia('https://twitter.com/user/status/9876543210');
     expect(result.success).toBe(true);
     expect(result.mediaItems?.[0].url).toContain('fallback');
-    expect(result.mediaItems?.[0].label).toMatch(/Download/);
+    expect(result.mediaItems?.[0].label).toMatch(/720×1280|720p|HD/);
+    expect(result.mediaItems?.[0].quality).toBe('720p');
     expect(fetchMock).toHaveBeenNthCalledWith(
       2,
       'https://api.vxtwitter.com/i/status/9876543210',
