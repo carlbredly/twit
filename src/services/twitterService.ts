@@ -1,14 +1,44 @@
 import type { DownloadResponse, MediaItem } from './downloadService';
 import type { MediaType } from '../utils/linkDetector';
 
-const pickBestMp4Variant = (
-  variants: Array<{ content_type?: string; bitrate?: number; url?: string }> | undefined
-): string | null => {
-  if (!variants?.length) return null;
-  const best = [...variants]
-    .filter((v) => v.content_type === 'video/mp4' && v.url)
-    .sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0))[0];
-  return best?.url || variants.find((v) => v.url)?.url || null;
+interface VideoVariant {
+  url?: string;
+  bitrate?: number;
+  content_type?: string;
+  width?: number;
+  height?: number;
+}
+
+const parseResolutionFromUrl = (url: string): { width?: number; height?: number } => {
+  const match = url.match(/\/(\d{2,4})x(\d{2,4})\//);
+  if (!match) return {};
+  return { width: Number(match[1]), height: Number(match[2]) };
+};
+
+const qualityLabel = (
+  type: MediaType,
+  width?: number,
+  height?: number,
+  bitrate?: number
+): string => {
+  if (type === 'image') return 'Download Image';
+  if (type === 'gif') {
+    if (width && height) return `Download GIF ${width}x${height}`;
+    return 'Download GIF';
+  }
+  if (width && height) {
+    const isHd = Math.max(width, height) >= 720;
+    return isHd ? `Download HD ${width}x${height}` : `Download ${width}x${height}`;
+  }
+  if (bitrate && bitrate >= 2_000_000) return 'Download HD';
+  return 'Download Video';
+};
+
+const mp4VariantsFromList = (variants: VideoVariant[] | undefined): VideoVariant[] => {
+  if (!variants?.length) return [];
+  return variants
+    .filter((v) => v.url && (v.content_type === 'video/mp4' || v.url.includes('.mp4')))
+    .sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0));
 };
 
 const mediaTypeFromFxVideo = (media: { type?: string }): MediaType => {
@@ -37,15 +67,41 @@ export const downloadTwitterMedia = async (url: string): Promise<DownloadRespons
           const mediaItems: MediaItem[] = [];
           const media = data.tweet.media;
 
-          // fxTwitter places videos AND animated GIFs under media.videos (type: "gif").
           for (const item of media.videos || []) {
-            const videoUrl = item.url || item.video_url || item.source?.url;
-            if (videoUrl) {
-              mediaItems.push({
-                url: videoUrl,
-                type: mediaTypeFromFxVideo(item),
-                thumbnail: item.thumbnail_url || item.preview_image_url,
-              });
+            const type = mediaTypeFromFxVideo(item);
+            const variants = mp4VariantsFromList(item.variants);
+
+            if (variants.length > 0) {
+              for (const variant of variants) {
+                if (!variant.url) continue;
+                const fromUrl = parseResolutionFromUrl(variant.url);
+                const width = variant.width || fromUrl.width || item.width;
+                const height = variant.height || fromUrl.height || item.height;
+                mediaItems.push({
+                  url: variant.url,
+                  type,
+                  thumbnail: item.thumbnail_url || item.preview_image_url,
+                  width,
+                  height,
+                  bitrate: variant.bitrate,
+                  label: qualityLabel(type, width, height, variant.bitrate),
+                });
+              }
+            } else {
+              const videoUrl = item.url || item.video_url || item.source?.url;
+              if (videoUrl) {
+                const fromUrl = parseResolutionFromUrl(videoUrl);
+                const width = item.width || fromUrl.width;
+                const height = item.height || fromUrl.height;
+                mediaItems.push({
+                  url: videoUrl,
+                  type,
+                  thumbnail: item.thumbnail_url || item.preview_image_url,
+                  width,
+                  height,
+                  label: qualityLabel(type, width, height),
+                });
+              }
             }
           }
 
@@ -55,25 +111,27 @@ export const downloadTwitterMedia = async (url: string): Promise<DownloadRespons
               mediaItems.push({
                 url: imageUrl,
                 type: 'image',
+                label: 'Download Image',
               });
             }
           }
 
           for (const item of media.animated_gif || []) {
-            const gifUrl =
-              item.url ||
-              pickBestMp4Variant(item.video_info?.variants) ||
-              item.video_url;
+            const variants = mp4VariantsFromList(item.video_info?.variants);
+            const gifUrl = item.url || variants[0]?.url || item.video_url;
             if (gifUrl) {
+              const fromUrl = parseResolutionFromUrl(gifUrl);
               mediaItems.push({
                 url: gifUrl,
                 type: 'gif',
                 thumbnail: item.thumbnail_url || item.media_url_https || item.preview_image_url,
+                width: fromUrl.width,
+                height: fromUrl.height,
+                label: qualityLabel('gif', fromUrl.width, fromUrl.height),
               });
             }
           }
 
-          // Deduplicate by URL while preserving order
           const seen = new Set<string>();
           const unique = mediaItems.filter((m) => {
             if (seen.has(m.url)) return false;
@@ -105,7 +163,6 @@ export const downloadTwitterMedia = async (url: string): Promise<DownloadRespons
 
 const downloadTwitterFallback = async (tweetId: string): Promise<DownloadResponse> => {
   try {
-    // vxTwitter expects /{user}/status/{id}; "i" is a valid placeholder username.
     const extractUrl = `https://api.vxtwitter.com/i/status/${tweetId}`;
 
     const response = await fetch(extractUrl, {
@@ -121,67 +178,46 @@ const downloadTwitterFallback = async (tweetId: string): Promise<DownloadRespons
         for (const media of extended) {
           if (!media?.url) continue;
           if (media.type === 'video') {
+            const fromUrl = parseResolutionFromUrl(media.url);
             mediaItems.push({
               url: media.url,
               type: 'video',
-              thumbnail: media.thumbnail_url || media.altText,
+              thumbnail: media.thumbnail_url,
+              width: fromUrl.width,
+              height: fromUrl.height,
+              label: qualityLabel('video', fromUrl.width, fromUrl.height),
             });
           } else if (media.type === 'gif' || media.type === 'animated_gif') {
             mediaItems.push({
               url: media.url,
               type: 'gif',
               thumbnail: media.thumbnail_url,
+              label: 'Download GIF',
             });
           } else if (media.type === 'image' || media.type === 'photo') {
             mediaItems.push({
               url: media.url,
               type: 'image',
+              label: 'Download Image',
             });
           }
         }
       }
 
-      // Legacy / alternate shape
-      if (mediaItems.length === 0 && Array.isArray(data.media)) {
-        for (const media of data.media) {
-          if (media.type === 'video') {
-            const best = pickBestMp4Variant(media.video_info?.variants);
-            if (best) {
-              mediaItems.push({
-                url: best,
-                type: 'video',
-                thumbnail: media.media_url_https,
-              });
-            }
-          } else if (media.type === 'photo') {
-            mediaItems.push({
-              url: media.media_url_https || media.url,
-              type: 'image',
-            });
-          } else if (media.type === 'animated_gif') {
-            const best = pickBestMp4Variant(media.video_info?.variants);
-            if (best) {
-              mediaItems.push({
-                url: best,
-                type: 'gif',
-                thumbnail: media.media_url_https,
-              });
-            }
-          }
-        }
-      }
-
-      // mediaURLs string list as last resort
       if (mediaItems.length === 0 && Array.isArray(data.mediaURLs)) {
         for (const mediaUrl of data.mediaURLs) {
           if (typeof mediaUrl !== 'string') continue;
           const lower = mediaUrl.toLowerCase();
-          const type: MediaType = lower.includes('.mp4')
-            ? 'video'
-            : lower.includes('video.twimg.com')
-              ? 'video'
-              : 'image';
-          mediaItems.push({ url: mediaUrl, type });
+          const type: MediaType =
+            lower.includes('.mp4') || lower.includes('video.twimg.com') ? 'video' : 'image';
+          const fromUrl = parseResolutionFromUrl(mediaUrl);
+          mediaItems.push({
+            url: mediaUrl,
+            type,
+            width: fromUrl.width,
+            height: fromUrl.height,
+            label: qualityLabel(type, fromUrl.width, fromUrl.height),
+          });
         }
       }
 

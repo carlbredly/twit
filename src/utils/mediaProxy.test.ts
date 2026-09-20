@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   isAllowedProxyTarget,
   isProxiedMediaHost,
-  resolveMediaFetchUrl,
+  buildProxiedDownloadUrl,
   MEDIA_PROXY_PATH,
 } from './mediaProxy';
 
@@ -21,15 +21,17 @@ describe('mediaProxy helpers', () => {
     expect(isAllowedProxyTarget('not-a-url').ok).toBe(false);
   });
 
-  it('réécrit les URLs twimg via le proxy en environnement navigateur', () => {
+  it('construit une URL proxy avec filename (style ssscdn)', () => {
     const source = 'https://video.twimg.com/ext_tw_video/abc/pu/vid/720x1280/x.mp4';
-    const resolved = resolveMediaFetchUrl(source);
-    expect(resolved.startsWith(`${MEDIA_PROXY_PATH}?url=`)).toBe(true);
-    expect(decodeURIComponent(resolved.split('url=')[1])).toBe(source);
+    const resolved = buildProxiedDownloadUrl(source, 'Download_HD.mp4');
+    expect(resolved.startsWith(`${MEDIA_PROXY_PATH}?`)).toBe(true);
+    const params = new URL(resolved, 'http://localhost').searchParams;
+    expect(params.get('url')).toBe(source);
+    expect(params.get('filename')).toBe('Download_HD.mp4');
   });
 
   it('laisse passer les URLs non-twimg', () => {
     const source = 'https://cdn.example.com/file.mp4';
-    expect(resolveMediaFetchUrl(source)).toBe(source);
+    expect(buildProxiedDownloadUrl(source)).toBe(source);
   });
 });

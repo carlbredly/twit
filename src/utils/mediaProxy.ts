@@ -37,14 +37,26 @@ export const isAllowedProxyTarget = (
 };
 
 /**
- * Route Twitter/X CDN URLs through the same-origin Vite proxy so the browser
- * does not send cross-origin CORS headers that trigger CDN 403 responses.
+ * Build a same-origin download URL like ssstwitter → ssscdn:
+ * the browser navigates to this URL and receives Content-Disposition: attachment.
  */
-export const resolveMediaFetchUrl = (mediaUrl: string): string => {
+export const buildProxiedDownloadUrl = (
+  mediaUrl: string,
+  filename?: string
+): string => {
   const allowed = isAllowedProxyTarget(mediaUrl);
   if (!allowed.ok) {
     return mediaUrl;
   }
 
-  return `${MEDIA_PROXY_PATH}?url=${encodeURIComponent(allowed.url.href)}`;
+  const params = new URLSearchParams();
+  params.set('url', allowed.url.href);
+  if (filename) {
+    params.set('filename', filename);
+  }
+  return `${MEDIA_PROXY_PATH}?${params.toString()}`;
 };
+
+/** @deprecated use buildProxiedDownloadUrl */
+export const resolveMediaFetchUrl = (mediaUrl: string): string =>
+  buildProxiedDownloadUrl(mediaUrl);

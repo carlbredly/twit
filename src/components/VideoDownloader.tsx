@@ -28,6 +28,38 @@ const getMediaTypeName = (type: MediaType): string => {
   }
 };
 
+
+const groupMediaItems = (items: MediaItem[]) => {
+  const groups: {
+    thumbnail?: string;
+    type: MediaType;
+    items: { item: MediaItem; index: number }[];
+  }[] = [];
+  const byKey = new Map<string, number>();
+
+  items.forEach((item, index) => {
+    const groupKey =
+      item.type === 'image'
+        ? `image:${item.url}`
+        : `av:${item.thumbnail || item.url.replace(/\/vid\/\d+x\d+\/[^/]+$/, '')}`;
+
+    const existing = byKey.get(groupKey);
+    if (existing !== undefined) {
+      groups[existing].items.push({ item, index });
+      return;
+    }
+    byKey.set(groupKey, groups.length);
+    groups.push({
+      thumbnail: item.thumbnail || (item.type === 'image' ? item.url : undefined),
+      type: item.type,
+      items: [{ item, index }],
+    });
+  });
+
+  return groups;
+};
+
+
 export const VideoDownloader = () => {
   const [url, setUrl] = useState('');
   const [linkInfo, setLinkInfo] = useState<{ platform: Platform; isValid: boolean } | null>(null);
@@ -196,33 +228,23 @@ export const VideoDownloader = () => {
             </div>
           )}
 
-          {/* Media Items Display */}
+          {/* Media Items Display — style ssstwitter: un aperçu + boutons par qualité */}
           {mediaItems.length > 0 && (
             <div className="space-y-4 pt-4 border-t border-gray-200 dark:border-gray-700">
               <h3 className="text-lg font-semibold text-gray-800 dark:text-gray-200">
-                Médias trouvés ({mediaItems.length})
+                Résultats ({groupMediaItems(mediaItems).length})
               </h3>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                {mediaItems.map((item, index) => (
+              <div className="grid grid-cols-1 gap-4">
+                {groupMediaItems(mediaItems).map((group, groupIndex) => (
                   <div
-                    key={index}
+                    key={groupIndex}
                     className="bg-gray-50 dark:bg-gray-900 rounded-xl p-4 space-y-3 border border-gray-200 dark:border-gray-700"
                   >
-                    {/* Media Preview */}
                     <div className="relative aspect-video bg-gray-200 dark:bg-gray-800 rounded-lg overflow-hidden">
-                      {item.thumbnail ? (
+                      {group.thumbnail ? (
                         <img
-                          src={item.thumbnail}
-                          alt={`Preview ${index + 1}`}
-                          className="w-full h-full object-cover"
-                          onError={(e) => {
-                            (e.target as HTMLImageElement).style.display = 'none';
-                          }}
-                        />
-                      ) : item.type === 'image' ? (
-                        <img
-                          src={item.url}
-                          alt={`Image ${index + 1}`}
+                          src={group.thumbnail}
+                          alt={`Preview ${groupIndex + 1}`}
                           className="w-full h-full object-cover"
                           onError={(e) => {
                             (e.target as HTMLImageElement).style.display = 'none';
@@ -230,51 +252,59 @@ export const VideoDownloader = () => {
                         />
                       ) : (
                         <div className="w-full h-full flex items-center justify-center">
-                          <span className="text-4xl">{getMediaTypeIcon(item.type)}</span>
+                          <span className="text-4xl">{getMediaTypeIcon(group.type)}</span>
                         </div>
                       )}
                       <div className="absolute top-2 right-2 bg-black/70 text-white px-2 py-1 rounded text-xs font-semibold">
-                        {getMediaTypeIcon(item.type)} {getMediaTypeName(item.type)}
+                        {getMediaTypeIcon(group.type)} {getMediaTypeName(group.type)}
                       </div>
                     </div>
 
-                    {/* Download Button */}
-                    <button
-                      onClick={() => handleDownloadItem(item, index)}
-                      disabled={downloadingIndex === index}
-                      className="w-full py-2.5 px-4 rounded-lg bg-gradient-to-r from-blue-600 to-purple-600 text-white font-semibold text-sm disabled:opacity-50 disabled:cursor-not-allowed hover:from-blue-700 hover:to-purple-700 transition-all flex items-center justify-center gap-2"
-                    >
-                      {downloadingIndex === index ? (
-                        <>
-                          <svg
-                            className="animate-spin h-4 w-4"
-                            xmlns="http://www.w3.org/2000/svg"
-                            fill="none"
-                            viewBox="0 0 24 24"
-                          >
-                            <circle
-                              className="opacity-25"
-                              cx="12"
-                              cy="12"
-                              r="10"
-                              stroke="currentColor"
-                              strokeWidth="4"
-                            ></circle>
-                            <path
-                              className="opacity-75"
-                              fill="currentColor"
-                              d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                            ></path>
-                          </svg>
-                          Téléchargement...
-                        </>
-                      ) : (
-                        <>
-                          <span>⬇️</span>
-                          Télécharger {getMediaTypeName(item.type)}
-                        </>
-                      )}
-                    </button>
+                    <div className="space-y-2">
+                      {group.items.map(({ item, index }) => (
+                        <button
+                          key={index}
+                          onClick={() => handleDownloadItem(item, index)}
+                          disabled={downloadingIndex === index}
+                          className={`w-full py-2.5 px-4 rounded-lg text-white font-semibold text-sm disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-2 ${
+                            item.label?.includes('HD')
+                              ? 'bg-blue-600 hover:bg-blue-700'
+                              : 'bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700'
+                          }`}
+                        >
+                          {downloadingIndex === index ? (
+                            <>
+                              <svg
+                                className="animate-spin h-4 w-4"
+                                xmlns="http://www.w3.org/2000/svg"
+                                fill="none"
+                                viewBox="0 0 24 24"
+                              >
+                                <circle
+                                  className="opacity-25"
+                                  cx="12"
+                                  cy="12"
+                                  r="10"
+                                  stroke="currentColor"
+                                  strokeWidth="4"
+                                ></circle>
+                                <path
+                                  className="opacity-75"
+                                  fill="currentColor"
+                                  d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                                ></path>
+                              </svg>
+                              Téléchargement...
+                            </>
+                          ) : (
+                            <>
+                              <span>⬇️</span>
+                              {item.label || `Télécharger ${getMediaTypeName(item.type)}`}
+                            </>
+                          )}
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 ))}
               </div>

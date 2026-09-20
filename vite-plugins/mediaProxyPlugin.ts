@@ -1,7 +1,7 @@
 import type { Plugin, Connect } from 'vite';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 
-const MEDIA_PROXY_PATH = '/api/media-proxy';
+export const MEDIA_PROXY_PATH = '/api/media-proxy';
 
 const ALLOWED_HOST_SUFFIX = '.twimg.com';
 const ALLOWED_HOSTS = new Set([
@@ -23,7 +23,32 @@ const sendJson = (res: ServerResponse, status: number, body: Record<string, stri
   res.end(JSON.stringify(body));
 };
 
-const createMediaProxyMiddleware = (): Connect.NextHandleFunction => {
+const sanitizeFilename = (name: string): string => {
+  const cleaned = name.replace(/[^\w.\-]+/g, '_').replace(/_+/g, '_').slice(0, 120);
+  return cleaned || 'twitter_media';
+};
+
+const guessFilename = (target: URL, requested: string | null): string => {
+  if (requested) {
+    const base = sanitizeFilename(requested);
+    if (/\.(mp4|jpg|jpeg|png|webp|gif|webm)$/i.test(base)) return base;
+    if (target.pathname.includes('.mp4')) return `${base}.mp4`;
+    if (/\.(jpe?g|png|webp|gif)$/i.test(target.pathname)) {
+      const ext = target.pathname.split('.').pop() || 'jpg';
+      return `${base}.${ext}`;
+    }
+    return `${base}.mp4`;
+  }
+  const last = target.pathname.split('/').pop() || 'twitter_media.mp4';
+  return sanitizeFilename(last.includes('.') ? last : `${last}.mp4`);
+};
+
+/**
+ * Same-origin media proxy modeled after ssstwitter/ssscdn:
+ * streams Twitter CDN bytes with Content-Disposition: attachment
+ * so the browser saves a real non-empty file.
+ */
+export const createMediaProxyMiddleware = (): Connect.NextHandleFunction => {
   return async (req: IncomingMessage, res: ServerResponse, next: Connect.NextFunction) => {
     const requestUrl = req.url || '';
     if (!requestUrl.startsWith(MEDIA_PROXY_PATH)) {
@@ -37,9 +62,11 @@ const createMediaProxyMiddleware = (): Connect.NextHandleFunction => {
     }
 
     let targetParam: string | null = null;
+    let filenameParam: string | null = null;
     try {
       const parsedReq = new URL(requestUrl, 'http://localhost');
       targetParam = parsedReq.searchParams.get('url');
+      filenameParam = parsedReq.searchParams.get('filename');
     } catch {
       sendJson(res, 400, { error: 'Requête invalide' });
       return;
@@ -64,9 +91,8 @@ const createMediaProxyMiddleware = (): Connect.NextHandleFunction => {
     }
 
     try {
-      // Server-side fetch without browser Origin/Sec-Fetch headers that cause 403.
       const upstream = await fetch(target.href, {
-        method: req.method,
+        method: 'GET',
         headers: {
           Accept: '*/*',
           'User-Agent':
@@ -89,16 +115,28 @@ const createMediaProxyMiddleware = (): Connect.NextHandleFunction => {
         return;
       }
 
-      const contentType = upstream.headers.get('content-type') || 'application/octet-stream';
+      const upstreamType = upstream.headers.get('content-type') || 'application/octet-stream';
       const contentLength = upstream.headers.get('content-length');
+      const filename = guessFilename(finalUrl, filenameParam);
 
+      // Match ssscdn behavior: force a file download in the browser.
       res.statusCode = 200;
-      res.setHeader('Content-Type', contentType);
+      res.setHeader('Content-Type', 'application/octet-stream');
+      res.setHeader('Content-Transfer-Encoding', 'binary');
+      res.setHeader('Content-Description', 'File Transfer');
+      res.setHeader(
+        'Content-Disposition',
+        `attachment; filename="${filename}"; filename*=UTF-8''${encodeURIComponent(filename)}`
+      );
+      res.setHeader('Cache-Control', 'private, no-store');
+      res.setHeader('X-Content-Type-Options', 'nosniff');
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      // Keep original type for debugging / clients that care.
+      res.setHeader('X-Upstream-Content-Type', upstreamType);
+
       if (contentLength) {
         res.setHeader('Content-Length', contentLength);
       }
-      res.setHeader('Cache-Control', 'private, max-age=60');
-      res.setHeader('Access-Control-Allow-Origin', '*');
 
       if (req.method === 'HEAD') {
         res.end();
