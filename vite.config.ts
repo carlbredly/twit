@@ -8,7 +8,11 @@ export default defineConfig({
   plugins: [react(), tailwindcss(), mediaProxyPlugin()],
   test: {
     environment: 'jsdom',
-    include: ['src/**/*.{test,spec}.{ts,tsx}', 'vite-plugins/**/*.{test,spec}.{ts,tsx}'],
+    include: [
+      'src/**/*.{test,spec}.{ts,tsx}',
+      'vite-plugins/**/*.{test,spec}.{ts,tsx}',
+      'api/**/*.{test,spec}.{js,ts}',
+    ],
     setupFiles: ['src/test/setup.ts'],
     restoreMocks: true,
     clearMocks: true,
