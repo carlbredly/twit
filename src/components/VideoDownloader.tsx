@@ -116,7 +116,7 @@ export const VideoDownloader = () => {
         setMediaItems(result.mediaItems);
         // Default: best quality (first item in each group — already sorted desc)
         const defaults: Record<number, number> = {};
-        groupMediaItems(result.mediaItems).forEach((group, gi) => {
+        groupMediaItems(result.mediaItems).forEach((_group, gi) => {
           defaults[gi] = 0;
         });
         setSelectedByGroup(defaults);
