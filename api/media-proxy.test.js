@@ -16,5 +16,7 @@ describe('Vercel api/media-proxy', () => {
     expect(source).toContain('isAllowedHost');
     expect(source).toContain('.twimg.com');
     expect(source).toContain('Hôte non autorisé');
+    expect(source).toContain('target.username');
+    expect(source).toContain("target.port !== '443'");
   });
 });

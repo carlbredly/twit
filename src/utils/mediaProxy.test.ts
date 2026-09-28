@@ -34,4 +34,11 @@ describe('mediaProxy helpers', () => {
     const source = 'https://cdn.example.com/file.mp4';
     expect(buildProxiedDownloadUrl(source)).toBe(source);
   });
+
+  it('refuse les identifiants, HTTP et hôtes privés', () => {
+    expect(isAllowedProxyTarget('https://user:pass@video.twimg.com/x.mp4').ok).toBe(false);
+    expect(isAllowedProxyTarget('https://video.twimg.com:8443/x.mp4').ok).toBe(false);
+    expect(isAllowedProxyTarget('https://127.0.0.1/x.mp4').ok).toBe(false);
+    expect(isAllowedProxyTarget('javascript:alert(1)').ok).toBe(false);
+  });
 });
