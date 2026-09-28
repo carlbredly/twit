@@ -83,6 +83,16 @@ const handleMediaProxy = async (req, res, requestUrl) => {
     return;
   }
 
+  if (target.username || target.password) {
+    sendJson(res, 403, { error: 'Hôte non autorisé' });
+    return;
+  }
+
+  if (target.port && target.port !== '443') {
+    sendJson(res, 403, { error: 'Hôte non autorisé' });
+    return;
+  }
+
   if (target.protocol !== 'https:' || !isAllowedHost(target.hostname)) {
     sendJson(res, 403, { error: 'Hôte non autorisé' });
     return;
@@ -131,6 +141,7 @@ const handleMediaProxy = async (req, res, requestUrl) => {
       'Content-Disposition': `attachment; filename="${filename}"; filename*=UTF-8''${encodeURIComponent(filename)}`,
       'Content-Length': String(buffer.byteLength),
       'Cache-Control': 'private, no-store',
+      'X-Content-Type-Options': 'nosniff',
       'Access-Control-Allow-Origin': '*',
     });
 

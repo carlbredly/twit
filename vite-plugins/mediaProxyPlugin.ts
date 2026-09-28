@@ -13,8 +13,15 @@ const ALLOWED_HOSTS = new Set([
 ]);
 
 const isAllowedHost = (hostname: string): boolean => {
-  const host = hostname.toLowerCase();
+  const host = hostname.toLowerCase().replace(/\.$/, '');
   return ALLOWED_HOSTS.has(host) || host.endsWith(ALLOWED_HOST_SUFFIX);
+};
+
+const isAllowedTarget = (target: URL): boolean => {
+  if (target.protocol !== 'https:') return false;
+  if (target.username || target.password) return false;
+  if (target.port && target.port !== '443') return false;
+  return isAllowedHost(target.hostname);
 };
 
 const sendJson = (res: ServerResponse, status: number, body: Record<string, string>) => {
@@ -24,7 +31,7 @@ const sendJson = (res: ServerResponse, status: number, body: Record<string, stri
 };
 
 const sanitizeFilename = (name: string): string => {
-  const cleaned = name.replace(/[^\w.\-]+/g, '_').replace(/_+/g, '_').slice(0, 120);
+  const cleaned = name.replace(/[^\w.-]+/g, '_').replace(/_+/g, '_').slice(0, 120);
   return cleaned || 'twitter_media';
 };
 
@@ -85,7 +92,7 @@ export const createMediaProxyMiddleware = (): Connect.NextHandleFunction => {
       return;
     }
 
-    if (target.protocol !== 'https:' || !isAllowedHost(target.hostname)) {
+    if (!isAllowedTarget(target)) {
       sendJson(res, 403, { error: 'Hôte non autorisé' });
       return;
     }
@@ -110,7 +117,7 @@ export const createMediaProxyMiddleware = (): Connect.NextHandleFunction => {
       }
 
       const finalUrl = new URL(upstream.url);
-      if (finalUrl.protocol !== 'https:' || !isAllowedHost(finalUrl.hostname)) {
+      if (!isAllowedTarget(finalUrl)) {
         sendJson(res, 502, { error: 'Redirection CDN non autorisée' });
         return;
       }

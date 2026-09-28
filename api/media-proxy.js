@@ -67,6 +67,14 @@ export default async function handler(request) {
     return json(400, { error: 'URL cible invalide' });
   }
 
+  if (target.username || target.password) {
+    return json(403, { error: 'Hôte non autorisé' });
+  }
+
+  if (target.port && target.port !== '443') {
+    return json(403, { error: 'Hôte non autorisé' });
+  }
+
   if (target.protocol !== 'https:' || !isAllowedHost(target.hostname)) {
     return json(403, { error: 'Hôte non autorisé' });
   }
