@@ -55,8 +55,19 @@ const contentTypeFor = (filePath) => {
   );
 };
 
+const SECURITY_HEADERS = {
+  'X-Content-Type-Options': 'nosniff',
+  'X-Frame-Options': 'DENY',
+  'Referrer-Policy': 'strict-origin-when-cross-origin',
+  'Permissions-Policy': 'camera=(), microphone=(), geolocation=(), payment=()',
+  'X-DNS-Prefetch-Control': 'off',
+};
+
 const sendJson = (res, status, body) => {
-  res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' });
+  res.writeHead(status, {
+    'Content-Type': 'application/json; charset=utf-8',
+    ...SECURITY_HEADERS,
+  });
   res.end(JSON.stringify(body));
 };
 
@@ -80,6 +91,16 @@ const handleMediaProxy = async (req, res, requestUrl) => {
     target = new URL(targetParam);
   } catch {
     sendJson(res, 400, { error: 'URL cible invalide' });
+    return;
+  }
+
+  if (target.username || target.password) {
+    sendJson(res, 403, { error: 'Hôte non autorisé' });
+    return;
+  }
+
+  if (target.port && target.port !== '443') {
+    sendJson(res, 403, { error: 'Hôte non autorisé' });
     return;
   }
 
@@ -107,7 +128,13 @@ const handleMediaProxy = async (req, res, requestUrl) => {
     }
 
     const finalUrl = new URL(upstream.url);
-    if (finalUrl.protocol !== 'https:' || !isAllowedHost(finalUrl.hostname)) {
+    if (
+      finalUrl.username ||
+      finalUrl.password ||
+      (finalUrl.port && finalUrl.port !== '443') ||
+      finalUrl.protocol !== 'https:' ||
+      !isAllowedHost(finalUrl.hostname)
+    ) {
       sendJson(res, 502, { error: 'Redirection CDN non autorisée' });
       return;
     }
@@ -131,6 +158,7 @@ const handleMediaProxy = async (req, res, requestUrl) => {
       'Content-Disposition': `attachment; filename="${filename}"; filename*=UTF-8''${encodeURIComponent(filename)}`,
       'Content-Length': String(buffer.byteLength),
       'Cache-Control': 'private, no-store',
+      'X-Content-Type-Options': 'nosniff',
       'Access-Control-Allow-Origin': '*',
     });
 
@@ -167,12 +195,12 @@ const handleStatic = (req, res) => {
             res.end('Not found');
             return;
           }
-          res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+          res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', ...SECURITY_HEADERS });
           res.end(html);
         });
         return;
       }
-      res.writeHead(200, { 'Content-Type': contentTypeFor(fp) });
+      res.writeHead(200, { 'Content-Type': contentTypeFor(fp), ...SECURITY_HEADERS });
       res.end(data);
     });
   };

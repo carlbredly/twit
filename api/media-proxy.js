@@ -67,6 +67,14 @@ export default async function handler(request) {
     return json(400, { error: 'URL cible invalide' });
   }
 
+  if (target.username || target.password) {
+    return json(403, { error: 'Hôte non autorisé' });
+  }
+
+  if (target.port && target.port !== '443') {
+    return json(403, { error: 'Hôte non autorisé' });
+  }
+
   if (target.protocol !== 'https:' || !isAllowedHost(target.hostname)) {
     return json(403, { error: 'Hôte non autorisé' });
   }
@@ -89,7 +97,13 @@ export default async function handler(request) {
     }
 
     const finalUrl = new URL(upstream.url);
-    if (finalUrl.protocol !== 'https:' || !isAllowedHost(finalUrl.hostname)) {
+    if (
+      finalUrl.username ||
+      finalUrl.password ||
+      (finalUrl.port && finalUrl.port !== '443') ||
+      finalUrl.protocol !== 'https:' ||
+      !isAllowedHost(finalUrl.hostname)
+    ) {
       return json(502, { error: 'Redirection CDN non autorisée' });
     }
 
