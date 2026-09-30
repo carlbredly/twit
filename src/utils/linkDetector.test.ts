@@ -1,0 +1,164 @@
+import { describe, expect, it } from 'vitest';
+import {
+  detectPlatform,
+  extractBlueskyPostRef,
+  extractInstagramShortcode,
+  extractThreadsShortcode,
+  extractTikTokVideoId,
+  extractTweetId,
+  getPlatformName,
+} from './linkDetector';
+
+describe('detectPlatform', () => {
+  it('détecte Instagram via l’hôte réel', () => {
+    const info = detectPlatform('https://www.instagram.com/p/AbC123_/');
+    expect(info.platform).toBe('instagram');
+    expect(info.isValid).toBe(true);
+  });
+
+  it('accepte un lien Instagram sans protocole', () => {
+    const info = detectPlatform('instagram.com/reel/xyz789');
+    expect(info.platform).toBe('instagram');
+    expect(info.isValid).toBe(true);
+  });
+
+  it('retire les paramètres de tracking du canonique', () => {
+    const info = detectPlatform('https://www.instagram.com/p/AbC123/?igsh=xyz&utm_source=share');
+    expect(info.isValid).toBe(true);
+    expect(info.canonicalUrl).toBe('https://www.instagram.com/p/AbC123/');
+  });
+
+  it('refuse un lookalike evilinstagram.com', () => {
+    const info = detectPlatform('https://evilinstagram.com/p/abc');
+    expect(info.isValid).toBe(false);
+    expect(info.platform).toBe('unknown');
+  });
+
+  it('refuse instagram.com.evil.com', () => {
+    const info = detectPlatform('https://instagram.com.evil.com/p/abc');
+    expect(info.isValid).toBe(false);
+  });
+
+  it('refuse un profil Instagram', () => {
+    const info = detectPlatform('https://www.instagram.com/someuser/');
+    expect(info.platform).toBe('instagram');
+    expect(info.isValid).toBe(false);
+  });
+
+  it('détecte Twitter/X', () => {
+    const info = detectPlatform('https://x.com/user/status/1234567890123456789');
+    expect(info.platform).toBe('twitter');
+    expect(info.isValid).toBe(true);
+  });
+
+  it('refuse un profil Twitter', () => {
+    const info = detectPlatform('https://twitter.com/someone');
+    expect(info.platform).toBe('twitter');
+    expect(info.isValid).toBe(false);
+  });
+
+  it('détecte Snapchat Spotlight', () => {
+    const info = detectPlatform('https://www.snapchat.com/spotlight/W7_abc');
+    expect(info.platform).toBe('snapchat');
+    expect(info.isValid).toBe(true);
+  });
+
+  it('refuse un lien /add Snapchat', () => {
+    const info = detectPlatform('https://www.snapchat.com/add/someone');
+    expect(info.platform).toBe('snapchat');
+    expect(info.isValid).toBe(false);
+  });
+
+  it('détecte TikTok vidéo', () => {
+    const info = detectPlatform('https://www.tiktok.com/@user/video/7123456789012345678');
+    expect(info.platform).toBe('tiktok');
+    expect(info.isValid).toBe(true);
+  });
+
+  it('détecte un lien court vm.tiktok.com', () => {
+    const info = detectPlatform('https://vm.tiktok.com/ZMabcdefg/');
+    expect(info.platform).toBe('tiktok');
+    expect(info.isValid).toBe(true);
+  });
+
+  it('détecte un lien court vt.tiktok.com', () => {
+    const info = detectPlatform('https://vt.tiktok.com/ZSabcdef/');
+    expect(info.platform).toBe('tiktok');
+    expect(info.isValid).toBe(true);
+  });
+
+  it('détecte un post Threads', () => {
+    const info = detectPlatform('https://www.threads.net/@alice/post/Dabc123xyz');
+    expect(info.platform).toBe('threads');
+    expect(info.isValid).toBe(true);
+  });
+
+  it('détecte un post Bluesky', () => {
+    const info = detectPlatform('https://bsky.app/profile/alice.bsky.social/post/3k2abcdef');
+    expect(info.platform).toBe('bluesky');
+    expect(info.isValid).toBe(true);
+  });
+
+  it('refuse un profil Bluesky sans post', () => {
+    const info = detectPlatform('https://bsky.app/profile/alice.bsky.social');
+    expect(info.platform).toBe('bluesky');
+    expect(info.isValid).toBe(false);
+  });
+
+  it('refuse un lookalike evilbsky.app', () => {
+    const info = detectPlatform('https://evilbsky.app/profile/a/post/abc');
+    expect(info.isValid).toBe(false);
+    expect(info.platform).toBe('unknown');
+  });
+
+  it('détecte un lien court Threads /t/', () => {
+    const info = detectPlatform('https://www.threads.com/t/Dabc123xyz');
+    expect(info.platform).toBe('threads');
+    expect(info.isValid).toBe(true);
+  });
+
+  it('refuse un profil Threads', () => {
+    const info = detectPlatform('https://www.threads.net/@alice');
+    expect(info.platform).toBe('threads');
+    expect(info.isValid).toBe(false);
+  });
+
+  it('refuse un lookalike threads.net.evil.com', () => {
+    const info = detectPlatform('https://threads.net.evil.com/@a/post/abc');
+    expect(info.isValid).toBe(false);
+  });
+
+  it('refuse YouTube explicitement', () => {
+    const info = detectPlatform('https://www.youtube.com/watch?v=dQw4w9WgXcQ');
+    expect(info.isValid).toBe(false);
+    expect(info.error).toMatch(/YouTube/);
+  });
+
+  it('refuse youtu.be', () => {
+    const info = detectPlatform('https://youtu.be/dQw4w9WgXcQ');
+    expect(info.isValid).toBe(false);
+    expect(info.error).toMatch(/YouTube/);
+  });
+
+  it('refuse javascript:', () => {
+    const info = detectPlatform('javascript:alert(1)');
+    expect(info.isValid).toBe(false);
+  });
+
+  it('extrait les identifiants', () => {
+    expect(extractTweetId('https://x.com/u/status/42')).toBe('42');
+    expect(extractInstagramShortcode('https://instagram.com/p/AbC123')).toBe('AbC123');
+    expect(extractTikTokVideoId('https://www.tiktok.com/@u/video/99')).toBe('99');
+    expect(extractThreadsShortcode('https://www.threads.net/@a/post/Dxyz')).toBe('Dxyz');
+    expect(extractBlueskyPostRef('https://bsky.app/profile/alice.bsky.social/post/3kxyz')?.rkey).toBe(
+      '3kxyz'
+    );
+  });
+
+  it('nomme les plateformes', () => {
+    expect(getPlatformName('tiktok')).toBe('TikTok');
+    expect(getPlatformName('threads')).toBe('Threads');
+    expect(getPlatformName('bluesky')).toBe('Bluesky');
+    expect(getPlatformName('unknown')).toBe('Inconnu');
+  });
+});
