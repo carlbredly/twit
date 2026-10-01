@@ -1,3 +1,5 @@
+import { isBlockedHost, validatePublicHttpUrl } from './security';
+
 /** Hosts that often block browser CORS fetches (esp. video.twimg.com → 403). */
 const PROXIED_MEDIA_HOSTS = new Set([
   'video.twimg.com',
@@ -10,7 +12,8 @@ const PROXIED_MEDIA_HOSTS = new Set([
 export const MEDIA_PROXY_PATH = '/api/media-proxy';
 
 export const isProxiedMediaHost = (hostname: string): boolean => {
-  const host = hostname.toLowerCase();
+  const host = hostname.toLowerCase().replace(/\.$/, '');
+  if (isBlockedHost(host)) return false;
   if (PROXIED_MEDIA_HOSTS.has(host)) return true;
   return host.endsWith('.twimg.com');
 };
@@ -18,22 +21,20 @@ export const isProxiedMediaHost = (hostname: string): boolean => {
 export const isAllowedProxyTarget = (
   rawUrl: string
 ): { ok: true; url: URL } | { ok: false; error: string } => {
-  let parsed: URL;
-  try {
-    parsed = new URL(rawUrl);
-  } catch {
-    return { ok: false, error: 'URL média invalide' };
+  const validation = validatePublicHttpUrl(rawUrl, { httpsOnly: true });
+  if (!validation.ok) {
+    return { ok: false, error: validation.error };
   }
 
-  if (parsed.protocol !== 'https:') {
-    return { ok: false, error: 'Seules les URLs HTTPS sont autorisées' };
+  if (validation.url.port && validation.url.port !== '443') {
+    return { ok: false, error: 'Port non autorisé pour le proxy' };
   }
 
-  if (!isProxiedMediaHost(parsed.hostname)) {
+  if (!isProxiedMediaHost(validation.url.hostname)) {
     return { ok: false, error: 'Hôte média non autorisé pour le proxy' };
   }
 
-  return { ok: true, url: parsed };
+  return { ok: true, url: validation.url };
 };
 
 /**
