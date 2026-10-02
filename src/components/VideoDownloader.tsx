@@ -1,127 +1,164 @@
-import { useMemo, useState } from 'react';
-import { detectPlatform, getPlatformIcon, getPlatformName, getPlatformColor, type Platform, type MediaType } from '../utils/linkDetector';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import {
+  detectPlatform,
+  getPlatformColor,
+  getPlatformIcon,
+  getPlatformName,
+  type Platform,
+} from '../utils/linkDetector';
 import { downloadMedia, triggerDownload, type MediaItem } from '../services/downloadService';
-
-const getMediaTypeIcon = (type: MediaType): string => {
-  switch (type) {
-    case 'video':
-      return '🎥';
-    case 'image':
-      return '🖼️';
-    case 'gif':
-      return '🎬';
-    default:
-      return '📎';
-  }
-};
-
-const getMediaTypeName = (type: MediaType): string => {
-  switch (type) {
-    case 'video':
-      return 'Vidéo';
-    case 'image':
-      return 'Image';
-    case 'gif':
-      return 'GIF';
-    default:
-      return 'Média';
-  }
-};
-
-type MediaGroup = {
-  thumbnail?: string;
-  type: MediaType;
-  items: { item: MediaItem; index: number }[];
-};
-
-const groupMediaItems = (items: MediaItem[]): MediaGroup[] => {
-  const groups: MediaGroup[] = [];
-  const byKey = new Map<string, number>();
-
-  items.forEach((item, index) => {
-    const groupKey =
-      item.type === 'image'
-        ? `image:${item.url}`
-        : `av:${item.thumbnail || item.url.replace(/\/vid\/\d+x\d+\/[^/]+$/, '')}`;
-
-    const existing = byKey.get(groupKey);
-    if (existing !== undefined) {
-      groups[existing].items.push({ item, index });
-      return;
-    }
-    byKey.set(groupKey, groups.length);
-    groups.push({
-      thumbnail: item.thumbnail || (item.type === 'image' ? item.url : undefined),
-      type: item.type,
-      items: [{ item, index }],
-    });
-  });
-
-  return groups;
-};
-
-const sizeOptionLabel = (item: MediaItem): string => {
-  if (item.quality && item.width && item.height) {
-    return `${item.quality} · ${item.width}×${item.height}`;
-  }
-  if (item.width && item.height) {
-    return `${item.width}×${item.height}`;
-  }
-  if (item.quality) return item.quality;
-  return item.label || 'Qualité standard';
-};
+import {
+  addHistoryEntry,
+  clearHistory,
+  exportHistoryCsv,
+  exportHistoryJson,
+  filterHistoryEntries,
+  importHistoryJson,
+  loadHistory,
+  removeHistoryEntry,
+  type HistoryEntry,
+} from '../utils/history';
+import {
+  availableMediaFilters,
+  filterMediaItems,
+  getMediaTypeIcon,
+  getMediaTypeName,
+  groupMediaItems,
+  sizeOptionLabel,
+} from '../utils/mediaHelpers';
+import { readUrlQueryParam } from '../utils/query';
+import { createRateLimiter, SEARCH_RATE_LIMIT, SEARCH_RATE_WINDOW_MS } from '../utils/rateLimit';
+import { buildShareUrl } from '../utils/share';
+import { applyTheme, readStoredTheme, toggleTheme, type Theme } from '../utils/theme';
+import { readClipboardText, writeClipboardText } from '../utils/clipboard';
+import { extractDroppedUrl, extractInputUrl } from '../utils/dropUrl';
+import { sanitizeFilename } from '../utils/security';
+import { isCancelHotkey, isSearchHotkey } from '../utils/keyboard';
+import type { MediaFilter } from '../types/media';
 
 export const VideoDownloader = () => {
   const [url, setUrl] = useState('');
-  const [linkInfo, setLinkInfo] = useState<{ platform: Platform; isValid: boolean } | null>(null);
+  const [linkInfo, setLinkInfo] = useState<ReturnType<typeof detectPlatform> | null>(null);
   const [isDownloading, setIsDownloading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [mediaItems, setMediaItems] = useState<MediaItem[]>([]);
-  const [downloadingIndex, setDownloadingIndex] = useState<number | null>(null);
-  /** Selected size index within each media group */
+  const [downloadingUrl, setDownloadingUrl] = useState<string | null>(null);
   const [selectedByGroup, setSelectedByGroup] = useState<Record<number, number>>({});
+  const [theme, setTheme] = useState<Theme>(() => readStoredTheme());
+  const [history, setHistory] = useState<HistoryEntry[]>(() => loadHistory());
+  const [historyQuery, setHistoryQuery] = useState('');
+  const [mediaFilter, setMediaFilter] = useState<MediaFilter>('all');
+  const [shareMessage, setShareMessage] = useState<string | null>(null);
+  const [pasteMessage, setPasteMessage] = useState<string | null>(null);
+  const [copyMessage, setCopyMessage] = useState<string | null>(null);
+  const [isDragOver, setIsDragOver] = useState(false);
+  const abortRef = useRef<AbortController | null>(null);
+  const rateLimiterRef = useRef(createRateLimiter(SEARCH_RATE_LIMIT, SEARCH_RATE_WINDOW_MS));
+  const importInputRef = useRef<HTMLInputElement | null>(null);
 
-  const mediaGroups = useMemo(() => groupMediaItems(mediaItems), [mediaItems]);
+  const filteredItems = useMemo(
+    () => filterMediaItems(mediaItems, mediaFilter),
+    [mediaItems, mediaFilter]
+  );
+  const mediaGroups = useMemo(() => groupMediaItems(filteredItems), [filteredItems]);
+  const filters = useMemo(() => availableMediaFilters(mediaItems), [mediaItems]);
+  const visibleHistory = useMemo(
+    () => filterHistoryEntries(history, historyQuery),
+    [history, historyQuery]
+  );
 
-  const handleUrlChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const inputUrl = e.target.value;
+  const applyUrl = (inputUrl: string) => {
     setUrl(inputUrl);
     setError(null);
     setMediaItems([]);
     setSelectedByGroup({});
+    setMediaFilter('all');
+    setShareMessage(null);
 
     if (inputUrl.trim()) {
-      const info = detectPlatform(inputUrl);
-      setLinkInfo(info);
+      setLinkInfo(detectPlatform(inputUrl));
     } else {
       setLinkInfo(null);
     }
   };
 
+  useEffect(() => {
+    applyTheme(theme);
+  }, [theme]);
+
+  useEffect(() => {
+    const fromQuery = readUrlQueryParam(window.location.search);
+    if (fromQuery) {
+      setUrl(fromQuery);
+      setLinkInfo(detectPlatform(fromQuery));
+    }
+  }, []);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (isCancelHotkey(event) && abortRef.current) {
+        abortRef.current.abort();
+        setIsDownloading(false);
+        setError('Recherche annulée');
+      }
+      if (isSearchHotkey(event)) {
+        event.preventDefault();
+        const search = document.querySelector<HTMLButtonElement>('[data-search-media]');
+        search?.click();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
+
+  const handleUrlChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    applyUrl(e.target.value);
+  };
+
   const handleDownload = async () => {
-    if (!linkInfo?.isValid || !url.trim()) {
-      setError('Veuillez entrer un lien valide');
+    const info = detectPlatform(url);
+    setLinkInfo(info);
+
+    if (!info.isValid || !url.trim()) {
+      setError(info.error || 'Veuillez entrer un lien valide');
       return;
     }
+
+    const limit = rateLimiterRef.current();
+    if (!limit.allowed) {
+      const seconds = Math.ceil(limit.retryAfterMs / 1000);
+      setError(`Trop de recherches. Réessayez dans ${seconds}s.`);
+      return;
+    }
+
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
 
     setIsDownloading(true);
     setError(null);
     setMediaItems([]);
     setSelectedByGroup({});
+    setMediaFilter('all');
 
     try {
-      const result = await downloadMedia(url, linkInfo.platform);
+      const result = await downloadMedia(info.canonicalUrl ?? url, info.platform, controller.signal);
+
+      if (controller.signal.aborted) {
+        setError('Recherche annulée');
+        return;
+      }
 
       if (result.success && result.mediaItems && result.mediaItems.length > 0) {
         setMediaItems(result.mediaItems);
-        // Default: best quality (first item in each group — already sorted desc)
         const defaults: Record<number, number> = {};
         groupMediaItems(result.mediaItems).forEach((_group, gi) => {
           defaults[gi] = 0;
         });
         setSelectedByGroup(defaults);
+        setHistory(addHistoryEntry(info.canonicalUrl ?? url, info.platform, result.mediaItems.length));
       } else {
-        if (linkInfo.platform === 'instagram') {
+        if (info.platform === 'instagram') {
           setError(
             result.error ||
               'Impossible de télécharger le média Instagram. ' +
@@ -139,7 +176,7 @@ export const VideoDownloader = () => {
       }
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Erreur inconnue';
-      if (linkInfo.platform === 'instagram') {
+      if (info.platform === 'instagram') {
         setError(
           `Erreur Instagram: ${errorMessage}. Essayez avec un autre lien ou vérifiez que le compte est public.`
         );
@@ -151,6 +188,12 @@ export const VideoDownloader = () => {
     }
   };
 
+  const handleCancel = () => {
+    abortRef.current?.abort();
+    setIsDownloading(false);
+    setError('Recherche annulée');
+  };
+
   const handleDownloadSelected = async (groupIndex: number) => {
     const group = mediaGroups[groupIndex];
     if (!group) return;
@@ -158,51 +201,184 @@ export const VideoDownloader = () => {
     const entry = group.items[selectedOffset] || group.items[0];
     if (!entry) return;
 
-    setDownloadingIndex(entry.index);
+    setDownloadingUrl(entry.item.url);
     try {
       const sizePart =
         entry.item.quality ||
         (entry.item.width && entry.item.height
           ? `${entry.item.width}x${entry.item.height}`
           : 'media');
-      const filename = `twitter-${sizePart}-${Date.now()}`;
+      const platform: Platform = linkInfo?.platform ?? 'unknown';
+      const filename = sanitizeFilename(`${platform}-${sizePart}-${Date.now()}`);
       await triggerDownload(entry.item.url, filename, entry.item.type);
     } catch (err) {
       setError(
         `Erreur lors du téléchargement: ${err instanceof Error ? err.message : 'Erreur inconnue'}`
       );
     } finally {
-      setDownloadingIndex(null);
+      setDownloadingUrl(null);
     }
+  };
+
+  const handleDownloadAll = async () => {
+    for (let index = 0; index < mediaGroups.length; index += 1) {
+      await handleDownloadSelected(index);
+    }
+  };
+
+  const handleCopyMediaUrl = async (mediaUrl: string) => {
+    const ok = await writeClipboardText(mediaUrl);
+    setCopyMessage(ok ? 'Lien média copié' : 'Impossible de copier le lien');
+    window.setTimeout(() => setCopyMessage(null), 2500);
+  };
+
+  const handlePaste = async () => {
+    const text = await readClipboardText();
+    if (!text) {
+      setPasteMessage('Presse-papiers vide ou inaccessible');
+      window.setTimeout(() => setPasteMessage(null), 2500);
+      return;
+    }
+    const extracted = extractInputUrl(text);
+    if (!extracted) {
+      applyUrl(text);
+      setPasteMessage('Aucun lien supporté dans le presse-papiers');
+      window.setTimeout(() => setPasteMessage(null), 2500);
+      return;
+    }
+    applyUrl(extracted);
+    setPasteMessage('Lien collé');
+    window.setTimeout(() => setPasteMessage(null), 2000);
+  };
+
+  const handleShare = async () => {
+    const share = buildShareUrl(window.location.href, url);
+    if (!share) return;
+    const ok = await writeClipboardText(share);
+    setShareMessage(ok ? 'Lien de partage copié' : share);
+    window.setTimeout(() => setShareMessage(null), 2500);
+  };
+
+  const handleImportFile = async (file: File | undefined) => {
+    if (!file) return;
+    const text = await file.text();
+    setHistory(importHistoryJson(text));
+  };
+
+  const handleExport = () => {
+    const blob = new Blob([exportHistoryJson(history)], { type: 'application/json' });
+    const href = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = href;
+    link.download = 'twit-history.json';
+    link.rel = 'noopener noreferrer';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    window.setTimeout(() => URL.revokeObjectURL(href), 100);
+  };
+
+  const handleExportCsv = () => {
+    const blob = new Blob([exportHistoryCsv(history)], { type: 'text/csv;charset=utf-8' });
+    const href = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = href;
+    link.download = 'twit-history.csv';
+    link.rel = 'noopener noreferrer';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    window.setTimeout(() => URL.revokeObjectURL(href), 100);
+  };
+
+  const handleDrop = (event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    setIsDragOver(false);
+    const dropped = extractDroppedUrl(event.dataTransfer);
+    if (!dropped) {
+      setPasteMessage('Déposez un lien Instagram, Twitter/X, TikTok, Snapchat, Threads, Bluesky, Reddit ou Pinterest');
+      window.setTimeout(() => setPasteMessage(null), 2500);
+      return;
+    }
+    applyUrl(dropped);
+    setPasteMessage('Lien déposé');
+    window.setTimeout(() => setPasteMessage(null), 2000);
   };
 
   return (
     <div className="w-full max-w-4xl mx-auto p-4 sm:p-6">
       <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl p-6 sm:p-8 space-y-6">
+        <div className="flex justify-end">
+          <button
+            type="button"
+            onClick={() => setTheme((current) => toggleTheme(current))}
+            className="px-3 py-2 rounded-lg text-sm font-medium bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-100 hover:bg-gray-200 dark:hover:bg-gray-600"
+            aria-label={theme === 'dark' ? 'Thème clair' : 'Thème sombre'}
+          >
+            {theme === 'dark' ? '☀️ Clair' : '🌙 Sombre'}
+          </button>
+        </div>
+
         <div className="text-center space-y-2">
           <h1 className="text-3xl sm:text-4xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
             Téléchargeur de Médias
           </h1>
           <p className="text-gray-600 dark:text-gray-400 text-sm sm:text-base">
-            Téléchargez des vidéos, images et GIFs depuis Instagram, Twitter/X ou Snapchat
+            Téléchargez des vidéos, images et GIFs publics depuis Instagram, Twitter/X, Snapchat, TikTok, Threads, Bluesky, Reddit ou Pinterest. Ctrl/⌘+Entrée pour rechercher, Échap pour annuler.
           </p>
         </div>
 
-        <div className="space-y-4">
-          <div className="relative">
+        <form
+          className="space-y-4"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void handleDownload();
+          }}
+        >
+          <div
+            className={`relative rounded-xl ${
+              isDragOver ? 'ring-2 ring-blue-500 ring-offset-2 dark:ring-offset-gray-800' : ''
+            }`}
+            onDragOver={(event) => {
+              event.preventDefault();
+              setIsDragOver(true);
+            }}
+            onDragLeave={() => setIsDragOver(false)}
+            onDrop={handleDrop}
+          >
             <input
               type="text"
               value={url}
               onChange={handleUrlChange}
-              placeholder="https://instagram.com/p/... ou https://twitter.com/.../status/..."
-              className="w-full px-4 py-4 pr-12 rounded-xl border-2 border-gray-200 dark:border-gray-700 focus:border-blue-500 focus:outline-none transition-colors bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-white placeholder-gray-400 text-sm sm:text-base"
+              aria-label="Lien du média"
+              placeholder="Collez ou déposez un lien… instagram.com/p/… x.com/…/status/… pinterest.com/pin/…"
+              className="w-full px-4 py-4 pr-40 rounded-xl border-2 border-gray-200 dark:border-gray-700 focus:border-blue-500 focus:outline-none transition-colors bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-white placeholder-gray-400 text-sm sm:text-base"
             />
-            {linkInfo && (
-              <div className="absolute right-3 top-1/2 -translate-y-1/2 text-2xl">
-                {getPlatformIcon(linkInfo.platform)}
-              </div>
-            )}
+            <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
+              {url && (
+                <button
+                  type="button"
+                  onClick={() => applyUrl('')}
+                  className="px-2 py-1 text-xs font-semibold rounded-lg bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 text-gray-700 dark:text-gray-200"
+                  aria-label="Effacer le lien"
+                >
+                  Effacer
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => void handlePaste()}
+                className="px-2 py-1 text-xs font-semibold rounded-lg bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 text-gray-700 dark:text-gray-200"
+              >
+                Coller
+              </button>
+              {linkInfo && <span className="text-xl">{getPlatformIcon(linkInfo.platform)}</span>}
+            </div>
           </div>
+
+          {pasteMessage && (
+            <p className="text-center text-sm text-gray-500 dark:text-gray-400">{pasteMessage}</p>
+          )}
 
           {linkInfo && (
             <div
@@ -214,44 +390,41 @@ export const VideoDownloader = () => {
               <span>
                 {linkInfo.isValid
                   ? `${getPlatformName(linkInfo.platform)} détecté`
-                  : 'Lien non reconnu'}
+                  : linkInfo.error || 'Lien non reconnu'}
               </span>
             </div>
           )}
 
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+            <button
+              type="submit"
+              data-search-media
+              disabled={!linkInfo?.isValid || isDownloading}
+              className="sm:col-span-2 py-4 px-6 rounded-xl bg-gradient-to-r from-blue-600 to-purple-600 text-white font-semibold text-base sm:text-lg disabled:opacity-50 disabled:cursor-not-allowed hover:from-blue-700 hover:to-purple-700 transition-all shadow-lg disabled:shadow-none"
+            >
+              {isDownloading ? 'Recherche en cours...' : 'Rechercher le média'}
+            </button>
+            <button
+              type="button"
+              onClick={handleCancel}
+              disabled={!isDownloading}
+              className="py-4 px-4 rounded-xl border-2 border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 font-semibold disabled:opacity-40"
+            >
+              Annuler
+            </button>
+          </div>
+
           <button
-            onClick={handleDownload}
-            disabled={!linkInfo?.isValid || isDownloading}
-            className="w-full py-4 px-6 rounded-xl bg-gradient-to-r from-blue-600 to-purple-600 text-white font-semibold text-base sm:text-lg disabled:opacity-50 disabled:cursor-not-allowed hover:from-blue-700 hover:to-purple-700 transition-all transform hover:scale-[1.02] active:scale-[0.98] shadow-lg disabled:shadow-none"
+            type="button"
+            onClick={() => void handleShare()}
+            disabled={!linkInfo?.isValid}
+            className="w-full py-3 px-4 rounded-xl border border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-200 font-semibold disabled:opacity-40"
           >
-            {isDownloading ? (
-              <span className="flex items-center justify-center gap-2">
-                <svg
-                  className="animate-spin h-5 w-5"
-                  xmlns="http://www.w3.org/2000/svg"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                >
-                  <circle
-                    className="opacity-25"
-                    cx="12"
-                    cy="12"
-                    r="10"
-                    stroke="currentColor"
-                    strokeWidth="4"
-                  ></circle>
-                  <path
-                    className="opacity-75"
-                    fill="currentColor"
-                    d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                  ></path>
-                </svg>
-                Recherche en cours...
-              </span>
-            ) : (
-              'Rechercher le média'
-            )}
+            Partager
           </button>
+          {shareMessage && (
+            <p className="text-center text-sm text-blue-600 dark:text-blue-300">{shareMessage}</p>
+          )}
 
           {error && (
             <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-xl p-4">
@@ -260,24 +433,59 @@ export const VideoDownloader = () => {
               </p>
             </div>
           )}
+        </form>
 
           {mediaGroups.length > 0 && (
             <div className="space-y-4 pt-4 border-t border-gray-200 dark:border-gray-700">
-              <h3 className="text-lg font-semibold text-gray-800 dark:text-gray-200">
-                Médias trouvés — choisissez la taille
-              </h3>
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                <h3 className="text-lg font-semibold text-gray-800 dark:text-gray-200">
+                  Médias trouvés — choisissez la taille
+                </h3>
+                <button
+                  type="button"
+                  onClick={() => void handleDownloadAll()}
+                  className="px-4 py-2 rounded-lg bg-purple-600 hover:bg-purple-700 text-white text-sm font-semibold"
+                >
+                  Tout télécharger
+                </button>
+              </div>
+
+              {filters.length > 1 && (
+                <div className="flex flex-wrap gap-2">
+                  {filters.map((filter) => (
+                    <button
+                      key={filter}
+                      type="button"
+                      onClick={() => {
+                        setMediaFilter(filter);
+                        setSelectedByGroup({});
+                      }}
+                      className={`px-3 py-1.5 rounded-full text-sm font-semibold ${
+                        mediaFilter === filter
+                          ? 'bg-blue-600 text-white'
+                          : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-200'
+                      }`}
+                    >
+                      {filter === 'all' ? 'Tous' : getMediaTypeName(filter)}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {copyMessage && (
+                <p className="text-sm text-center text-green-600 dark:text-green-400">{copyMessage}</p>
+              )}
+
               <div className="grid grid-cols-1 gap-4">
                 {mediaGroups.map((group, groupIndex) => {
                   const selectedOffset = selectedByGroup[groupIndex] ?? 0;
                   const selected = group.items[selectedOffset]?.item;
-                  const isBusy =
-                    downloadingIndex !== null &&
-                    group.items.some(({ index }) => index === downloadingIndex);
+                  const isBusy = Boolean(selected && downloadingUrl === selected.url);
                   const hasMultipleSizes = group.items.length > 1;
 
                   return (
                     <div
-                      key={groupIndex}
+                      key={`${group.type}-${groupIndex}`}
                       className="bg-gray-50 dark:bg-gray-900 rounded-xl p-4 space-y-4 border border-gray-200 dark:border-gray-700"
                     >
                       <div className="relative aspect-video bg-gray-200 dark:bg-gray-800 rounded-lg overflow-hidden">
@@ -310,7 +518,7 @@ export const VideoDownloader = () => {
                               const active = selectedOffset === offset;
                               return (
                                 <label
-                                  key={offset}
+                                  key={item.url}
                                   className={`cursor-pointer rounded-lg border-2 px-3 py-3 text-center transition-all ${
                                     active
                                       ? 'border-blue-600 bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-200'
@@ -353,55 +561,123 @@ export const VideoDownloader = () => {
                         )
                       )}
 
-                      <button
-                        onClick={() => handleDownloadSelected(groupIndex)}
-                        disabled={isBusy || !selected}
-                        className="w-full py-3 px-4 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-semibold text-sm sm:text-base disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-2"
-                      >
-                        {isBusy ? (
-                          <>
-                            <svg
-                              className="animate-spin h-4 w-4"
-                              xmlns="http://www.w3.org/2000/svg"
-                              fill="none"
-                              viewBox="0 0 24 24"
-                            >
-                              <circle
-                                className="opacity-25"
-                                cx="12"
-                                cy="12"
-                                r="10"
-                                stroke="currentColor"
-                                strokeWidth="4"
-                              ></circle>
-                              <path
-                                className="opacity-75"
-                                fill="currentColor"
-                                d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                              ></path>
-                            </svg>
-                            Téléchargement...
-                          </>
-                        ) : (
-                          <>
-                            <span>⬇️</span>
-                            Télécharger
-                            {selected?.quality ? ` ${selected.quality}` : ''}
-                            {selected?.width && selected?.height
-                              ? ` (${selected.width}×${selected.height})`
-                              : ''}
-                          </>
-                        )}
-                      </button>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        <button
+                          type="button"
+                          onClick={() => void handleDownloadSelected(groupIndex)}
+                          disabled={isBusy || !selected}
+                          className="w-full py-3 px-4 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-semibold text-sm sm:text-base disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-2"
+                        >
+                          {isBusy ? 'Téléchargement...' : (
+                            <>
+                              <span>⬇️</span>
+                              Télécharger
+                              {selected?.quality ? ` ${selected.quality}` : ''}
+                              {selected?.width && selected?.height
+                                ? ` (${selected.width}×${selected.height})`
+                                : ''}
+                            </>
+                          )}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => selected && void handleCopyMediaUrl(selected.url)}
+                          disabled={!selected}
+                          className="w-full py-3 px-4 rounded-lg border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 font-semibold text-sm disabled:opacity-50"
+                        >
+                          Copier le lien
+                        </button>
+                      </div>
                     </div>
                   );
                 })}
               </div>
             </div>
           )}
-        </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4 pt-4 border-t border-gray-200 dark:border-gray-700">
+        <section className="space-y-3 pt-4 border-t border-gray-200 dark:border-gray-700">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+            <h2 className="text-lg font-semibold text-gray-800 dark:text-gray-200">Historique local</h2>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={handleExport}
+                className="px-3 py-1.5 text-sm rounded-lg bg-gray-100 dark:bg-gray-700"
+              >
+                Exporter JSON
+              </button>
+              <button
+                type="button"
+                onClick={handleExportCsv}
+                className="px-3 py-1.5 text-sm rounded-lg bg-gray-100 dark:bg-gray-700"
+              >
+                Exporter CSV
+              </button>
+              <button
+                type="button"
+                onClick={() => importInputRef.current?.click()}
+                className="px-3 py-1.5 text-sm rounded-lg bg-gray-100 dark:bg-gray-700"
+              >
+                Importer
+              </button>
+              <button
+                type="button"
+                onClick={() => setHistory(clearHistory())}
+                className="px-3 py-1.5 text-sm rounded-lg bg-red-50 dark:bg-red-900/30 text-red-700 dark:text-red-200"
+              >
+                Tout supprimer
+              </button>
+            </div>
+          </div>
+          <input
+            ref={importInputRef}
+            type="file"
+            accept="application/json"
+            className="hidden"
+            onChange={(event) => {
+              void handleImportFile(event.target.files?.[0]);
+              event.target.value = '';
+            }}
+          />
+          <input
+            type="search"
+            value={historyQuery}
+            onChange={(event) => setHistoryQuery(event.target.value)}
+            placeholder="Filtrer l’historique"
+            aria-label="Filtrer l’historique"
+            className="w-full px-3 py-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900 text-sm"
+          />
+          {visibleHistory.length === 0 ? (
+            <p className="text-sm text-gray-500 dark:text-gray-400">Aucun lien enregistré.</p>
+          ) : (
+            <ul className="space-y-2">
+              {visibleHistory.map((entry) => (
+                <li
+                  key={entry.id}
+                  className="flex items-center justify-between gap-2 rounded-lg bg-gray-50 dark:bg-gray-900 px-3 py-2"
+                >
+                  <button
+                    type="button"
+                    className="text-left text-sm text-blue-700 dark:text-blue-300 truncate"
+                    onClick={() => applyUrl(entry.url)}
+                  >
+                    {getPlatformIcon(entry.platform)} {entry.url}
+                  </button>
+                  <button
+                    type="button"
+                    aria-label={`Supprimer ${entry.url}`}
+                    onClick={() => setHistory(removeHistoryEntry(entry.id))}
+                    className="text-xs text-red-600"
+                  >
+                    ×
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4 pt-4 border-t border-gray-200 dark:border-gray-700">
           <div className="bg-gradient-to-br from-purple-50 to-pink-50 dark:from-purple-900/20 dark:to-pink-900/20 rounded-xl p-4 text-center">
             <div className="text-3xl mb-2">📷</div>
             <div className="font-semibold text-gray-800 dark:text-gray-200 text-sm mb-1">Instagram</div>
@@ -416,6 +692,31 @@ export const VideoDownloader = () => {
             <div className="text-3xl mb-2">👻</div>
             <div className="font-semibold text-gray-800 dark:text-gray-200 text-sm mb-1">Snapchat</div>
             <div className="text-xs text-gray-600 dark:text-gray-400">Stories publiques</div>
+          </div>
+          <div className="bg-gradient-to-br from-gray-50 to-rose-50 dark:from-gray-900/40 dark:to-rose-900/20 rounded-xl p-4 text-center">
+            <div className="text-3xl mb-2">🎵</div>
+            <div className="font-semibold text-gray-800 dark:text-gray-200 text-sm mb-1">TikTok</div>
+            <div className="text-xs text-gray-600 dark:text-gray-400">Vidéos et liens courts</div>
+          </div>
+          <div className="bg-gradient-to-br from-slate-50 to-indigo-50 dark:from-slate-900/40 dark:to-indigo-900/20 rounded-xl p-4 text-center">
+            <div className="text-3xl mb-2">🧵</div>
+            <div className="font-semibold text-gray-800 dark:text-gray-200 text-sm mb-1">Threads</div>
+            <div className="text-xs text-gray-600 dark:text-gray-400">Posts publics</div>
+          </div>
+          <div className="bg-gradient-to-br from-sky-50 to-blue-50 dark:from-sky-900/20 dark:to-blue-900/20 rounded-xl p-4 text-center">
+            <div className="text-3xl mb-2">🦋</div>
+            <div className="font-semibold text-gray-800 dark:text-gray-200 text-sm mb-1">Bluesky</div>
+            <div className="text-xs text-gray-600 dark:text-gray-400">Posts publics AT Protocol</div>
+          </div>
+          <div className="bg-gradient-to-br from-orange-50 to-red-50 dark:from-orange-900/20 dark:to-red-900/20 rounded-xl p-4 text-center">
+            <div className="text-3xl mb-2">🟠</div>
+            <div className="font-semibold text-gray-800 dark:text-gray-200 text-sm mb-1">Reddit</div>
+            <div className="text-xs text-gray-600 dark:text-gray-400">Posts et galeries publics</div>
+          </div>
+          <div className="bg-gradient-to-br from-rose-50 to-red-50 dark:from-rose-900/20 dark:to-red-900/20 rounded-xl p-4 text-center">
+            <div className="text-3xl mb-2">📌</div>
+            <div className="font-semibold text-gray-800 dark:text-gray-200 text-sm mb-1">Pinterest</div>
+            <div className="text-xs text-gray-600 dark:text-gray-400">Pins et vidéos publics</div>
           </div>
         </div>
       </div>
