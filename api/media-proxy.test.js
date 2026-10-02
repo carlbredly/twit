@@ -17,4 +17,9 @@ describe('Vercel api/media-proxy', () => {
     expect(source).toContain('.twimg.com');
     expect(source).toContain('Hôte non autorisé');
   });
+
+  it('refuse identifiants et ports non 443', () => {
+    expect(source).toContain('username');
+    expect(source).toContain("port !== '443'");
+  });
 });
