@@ -34,4 +34,14 @@ describe('mediaProxy helpers', () => {
     const source = 'https://cdn.example.com/file.mp4';
     expect(buildProxiedDownloadUrl(source)).toBe(source);
   });
+
+  it('refuse un port non standard et les identifiants', () => {
+    expect(isAllowedProxyTarget('https://video.twimg.com:8443/x.mp4').ok).toBe(false);
+    expect(isAllowedProxyTarget('https://user:pass@video.twimg.com/x.mp4').ok).toBe(false);
+  });
+
+  it('refuse un hôte qui n’est pas twimg.com', () => {
+    expect(isProxiedMediaHost('localhost')).toBe(false);
+    expect(isAllowedProxyTarget('https://video.twimg.com.evil.com/x.mp4').ok).toBe(false);
+  });
 });

@@ -14,6 +14,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DIST = path.join(__dirname, 'dist');
 const PORT = Number(process.env.PORT || 4173);
 const MEDIA_PROXY_PATH = '/api/media-proxy';
+const META_PROXY_PATH = '/api/meta-proxy';
+const MAX_META_JSON_BYTES = 1_000_000;
 
 const ALLOWED_HOSTS = new Set([
   'video.twimg.com',
@@ -26,6 +28,27 @@ const ALLOWED_HOSTS = new Set([
 const isAllowedHost = (hostname) => {
   const host = hostname.toLowerCase();
   return ALLOWED_HOSTS.has(host) || host.endsWith('.twimg.com');
+};
+
+const isAllowedMetaUrl = (raw) => {
+  let parsed;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    return { ok: false, error: 'URL cible invalide' };
+  }
+  if (parsed.protocol !== 'https:') return { ok: false, error: 'Seules les URLs HTTPS sont autorisées' };
+  if (parsed.username || parsed.password) return { ok: false, error: 'Identifiants dans l’URL interdits' };
+  if (parsed.port && parsed.port !== '443') return { ok: false, error: 'Port non autorisé' };
+  const host = parsed.hostname.toLowerCase().replace(/\.$/, '');
+  const pathName = parsed.pathname;
+  const oembed =
+    (host === 'pinterest.com' || host.endsWith('.pinterest.com')) && pathName.startsWith('/oembed.json');
+  const pidgets = host === 'api.pinterest.com' && pathName.startsWith('/v3/pidgets/pins/info/');
+  if (!oembed && !pidgets) {
+    return { ok: false, error: 'Hôte ou chemin non autorisé pour le proxy métadonnées' };
+  }
+  return { ok: true, url: parsed };
 };
 
 const sanitizeFilename = (name) => {
@@ -55,8 +78,19 @@ const contentTypeFor = (filePath) => {
   );
 };
 
+const SECURITY_HEADERS = {
+  'X-Content-Type-Options': 'nosniff',
+  'X-Frame-Options': 'DENY',
+  'Referrer-Policy': 'strict-origin-when-cross-origin',
+  'Permissions-Policy': 'camera=(), microphone=(), geolocation=(), payment=()',
+  'X-DNS-Prefetch-Control': 'off',
+};
+
 const sendJson = (res, status, body) => {
-  res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' });
+  res.writeHead(status, {
+    'Content-Type': 'application/json; charset=utf-8',
+    ...SECURITY_HEADERS,
+  });
   res.end(JSON.stringify(body));
 };
 
@@ -80,6 +114,16 @@ const handleMediaProxy = async (req, res, requestUrl) => {
     target = new URL(targetParam);
   } catch {
     sendJson(res, 400, { error: 'URL cible invalide' });
+    return;
+  }
+
+  if (target.username || target.password) {
+    sendJson(res, 403, { error: 'Hôte non autorisé' });
+    return;
+  }
+
+  if (target.port && target.port !== '443') {
+    sendJson(res, 403, { error: 'Hôte non autorisé' });
     return;
   }
 
@@ -107,7 +151,13 @@ const handleMediaProxy = async (req, res, requestUrl) => {
     }
 
     const finalUrl = new URL(upstream.url);
-    if (finalUrl.protocol !== 'https:' || !isAllowedHost(finalUrl.hostname)) {
+    if (
+      finalUrl.username ||
+      finalUrl.password ||
+      (finalUrl.port && finalUrl.port !== '443') ||
+      finalUrl.protocol !== 'https:' ||
+      !isAllowedHost(finalUrl.hostname)
+    ) {
       sendJson(res, 502, { error: 'Redirection CDN non autorisée' });
       return;
     }
@@ -131,6 +181,7 @@ const handleMediaProxy = async (req, res, requestUrl) => {
       'Content-Disposition': `attachment; filename="${filename}"; filename*=UTF-8''${encodeURIComponent(filename)}`,
       'Content-Length': String(buffer.byteLength),
       'Cache-Control': 'private, no-store',
+      'X-Content-Type-Options': 'nosniff',
       'Access-Control-Allow-Origin': '*',
     });
 
@@ -167,12 +218,12 @@ const handleStatic = (req, res) => {
             res.end('Not found');
             return;
           }
-          res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+          res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', ...SECURITY_HEADERS });
           res.end(html);
         });
         return;
       }
-      res.writeHead(200, { 'Content-Type': contentTypeFor(fp) });
+      res.writeHead(200, { 'Content-Type': contentTypeFor(fp), ...SECURITY_HEADERS });
       res.end(data);
     });
   };
@@ -180,10 +231,70 @@ const handleStatic = (req, res) => {
   serve(filePath);
 };
 
+const handleMetaProxy = async (req, res, requestUrl) => {
+  if (req.method !== 'GET' && req.method !== 'HEAD') {
+    sendJson(res, 405, { error: 'Method not allowed' });
+    return;
+  }
+
+  const parsed = new URL(requestUrl, `http://127.0.0.1:${PORT}`);
+  const targetParam = parsed.searchParams.get('url');
+  if (!targetParam) {
+    sendJson(res, 400, { error: 'Paramètre url manquant' });
+    return;
+  }
+
+  const allowed = isAllowedMetaUrl(targetParam);
+  if (!allowed.ok) {
+    sendJson(res, 403, { error: allowed.error });
+    return;
+  }
+
+  try {
+    const upstream = await fetch(allowed.url.href, {
+      headers: { Accept: 'application/json' },
+      redirect: 'follow',
+    });
+    if (!upstream.ok) {
+      sendJson(res, upstream.status, { error: `Échec métadonnées (${upstream.status})` });
+      return;
+    }
+    const finalCheck = isAllowedMetaUrl(upstream.url);
+    if (!finalCheck.ok) {
+      sendJson(res, 502, { error: 'Redirection métadonnées non autorisée' });
+      return;
+    }
+    const buffer = Buffer.from(await upstream.arrayBuffer());
+    if (buffer.byteLength === 0 || buffer.byteLength > MAX_META_JSON_BYTES) {
+      sendJson(res, 502, { error: 'Réponse métadonnées invalide' });
+      return;
+    }
+    JSON.parse(buffer.toString('utf8'));
+    res.writeHead(200, {
+      'Content-Type': 'application/json; charset=utf-8',
+      'Cache-Control': 'private, no-store',
+      'X-Content-Type-Options': 'nosniff',
+    });
+    if (req.method === 'HEAD') {
+      res.end();
+      return;
+    }
+    res.end(buffer);
+  } catch (error) {
+    sendJson(res, 502, {
+      error: error instanceof Error ? error.message : 'Erreur proxy métadonnées',
+    });
+  }
+};
+
 const server = http.createServer(async (req, res) => {
   const requestUrl = req.url || '/';
   if (requestUrl.startsWith(MEDIA_PROXY_PATH)) {
     await handleMediaProxy(req, res, requestUrl);
+    return;
+  }
+  if (requestUrl.startsWith(META_PROXY_PATH)) {
+    await handleMetaProxy(req, res, requestUrl);
     return;
   }
   handleStatic(req, res);
