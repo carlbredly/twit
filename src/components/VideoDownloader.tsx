@@ -714,7 +714,11 @@ export const VideoDownloader = () => {
                         aria-label={starred ? `Retirer ${entry.url} des favoris` : `Ajouter ${entry.url} aux favoris`}
                         aria-pressed={starred}
                         onClick={() => setFavorites(toggleFavorite(entry.url))}
-                        className={`text-sm ${starred ? 'text-amber-500' : 'text-gray-400'}`}
+                        className={`min-w-9 min-h-9 px-2 text-xl leading-none rounded-md ${
+                          starred
+                            ? 'text-amber-500 bg-amber-50 dark:bg-amber-900/20'
+                            : 'text-gray-400 hover:text-amber-400 hover:bg-gray-100 dark:hover:bg-gray-800'
+                        }`}
                       >
                         {starred ? '★' : '☆'}
                       </button>
