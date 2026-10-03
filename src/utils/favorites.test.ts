@@ -26,9 +26,9 @@ describe('favorites', () => {
   });
 
   it('déduplique après suppression du tracking', () => {
-    toggleFavorite(TRACKED);
-    toggleFavorite(SAFE_URL);
-    expect(loadFavoriteUrls()).toEqual([SAFE_URL]);
+    expect(toggleFavorite(TRACKED)).toEqual([SAFE_URL]);
+    expect(isFavorite(SAFE_URL)).toBe(true);
+    expect(toggleFavorite(SAFE_URL)).toEqual([]);
   });
 
   it('filtre les favoris dangereux déjà stockés', () => {

@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { VideoDownloader } from './VideoDownloader';
 import { readClipboardText } from '../utils/clipboard';
+import { addHistoryEntry } from '../utils/history';
 
 vi.mock('../utils/clipboard', () => ({
   readClipboardText: vi.fn(),
@@ -17,12 +18,14 @@ describe('VideoDownloader', () => {
   it('affiche le titre, TikTok, Threads, Bluesky, Reddit, Pinterest et Mastodon', () => {
     render(<VideoDownloader />);
     expect(screen.getByRole('heading', { name: /téléchargeur de médias/i })).toBeTruthy();
-    expect(screen.getByText('TikTok')).toBeTruthy();
-    expect(screen.getByText('Threads')).toBeTruthy();
-    expect(screen.getByText('Bluesky')).toBeTruthy();
-    expect(screen.getByText('Reddit')).toBeTruthy();
-    expect(screen.getByText('Pinterest')).toBeTruthy();
-    expect(screen.getByText('Mastodon')).toBeTruthy();
+    expect(screen.getAllByText('TikTok').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Threads').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Bluesky').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Reddit').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Pinterest').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Mastodon').length).toBeGreaterThan(0);
+    expect(screen.getByLabelText(/filtrer par plateforme/i)).toBeTruthy();
+    expect(screen.getByText(/favoris seulement/i)).toBeTruthy();
   });
 
   it('détecte Twitter/X', async () => {
@@ -160,6 +163,17 @@ describe('VideoDownloader', () => {
     );
     expect(await screen.findByText(/Plateforme non reconnue/i)).toBeTruthy();
     expect(screen.getByRole('button', { name: /rechercher le média/i })).toBeDisabled();
+  });
+
+  it('ajoute un favori depuis l’historique', async () => {
+    addHistoryEntry('https://mastodon.social/@alice/123456789012345', 'mastodon');
+    const user = userEvent.setup();
+    render(<VideoDownloader />);
+    await user.click(screen.getByRole('button', { name: /ajouter .* aux favoris/i }));
+    expect(screen.getByRole('button', { name: /retirer .* des favoris/i })).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    );
   });
 
   it('colle un lien depuis le presse-papiers', async () => {
