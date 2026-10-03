@@ -11,7 +11,7 @@
     "start": "node server.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:security": "vitest run src/utils/security.test.ts src/utils/linkDetector.test.ts src/utils/tracking.test.ts src/utils/share.test.ts src/utils/http.test.ts src/utils/keyboard.test.ts src/services/downloadService.test.ts src/services/mediaParsers.test.ts src/utils/history.test.ts src/utils/clipboard.test.ts src/utils/mediaProxy.test.ts src/utils/metaProxy.test.ts src/utils/dropUrl.test.ts src/services/threadsService.test.ts src/services/blueskyService.test.ts src/services/redditService.test.ts src/services/pinterestService.test.ts api/media-proxy.test.js api/meta-proxy.test.js"
+    "test:security": "vitest run src/utils/security.test.ts src/utils/linkDetector.test.ts src/utils/tracking.test.ts src/utils/share.test.ts src/utils/http.test.ts src/utils/keyboard.test.ts src/services/downloadService.test.ts src/services/mediaParsers.test.ts src/utils/history.test.ts src/utils/favorites.test.ts src/utils/clipboard.test.ts src/utils/mediaProxy.test.ts src/utils/metaProxy.test.ts src/utils/dropUrl.test.ts src/services/threadsService.test.ts src/services/blueskyService.test.ts src/services/redditService.test.ts src/services/pinterestService.test.ts src/services/mastodonService.test.ts api/media-proxy.test.js api/meta-proxy.test.js"
   },
   "dependencies": {
     "react": "^19.2.0",

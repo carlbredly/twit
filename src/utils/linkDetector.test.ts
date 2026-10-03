@@ -3,12 +3,14 @@ import {
   detectPlatform,
   extractBlueskyPostRef,
   extractInstagramShortcode,
+  extractMastodonStatusRef,
   extractPinterestPinId,
   extractRedditPostId,
   extractThreadsShortcode,
   extractTikTokVideoId,
   extractTweetId,
   getPlatformName,
+  isMastodonHost,
   isPinterestHost,
 } from './linkDetector';
 
@@ -190,6 +192,41 @@ describe('detectPlatform', () => {
     expect(info.isValid).toBe(false);
   });
 
+  it('détecte un statut Mastodon', () => {
+    const info = detectPlatform('https://mastodon.social/@alice/123456789012345');
+    expect(info.platform).toBe('mastodon');
+    expect(info.isValid).toBe(true);
+  });
+
+  it('détecte un statut Mastodon /users/…/statuses/…', () => {
+    const info = detectPlatform('https://fosstodon.org/users/alice/statuses/98765432100');
+    expect(info.platform).toBe('mastodon');
+    expect(info.isValid).toBe(true);
+  });
+
+  it('refuse un profil Mastodon', () => {
+    const info = detectPlatform('https://mastodon.social/@alice');
+    expect(info.platform).toBe('mastodon');
+    expect(info.isValid).toBe(false);
+  });
+
+  it('refuse un lookalike evilmastodon.social', () => {
+    const info = detectPlatform('https://evilmastodon.social/@alice/123456789012345');
+    expect(info.isValid).toBe(false);
+    expect(info.platform).toBe('unknown');
+  });
+
+  it('refuse mastodon.social.evil.com', () => {
+    const info = detectPlatform('https://mastodon.social.evil.com/@alice/123456789012345');
+    expect(info.isValid).toBe(false);
+  });
+
+  it('refuse une instance Mastodon hors allowlist', () => {
+    const info = detectPlatform('https://random-site.example/@alice/123456789012345');
+    expect(info.isValid).toBe(false);
+    expect(info.platform).toBe('unknown');
+  });
+
   it('refuse YouTube explicitement', () => {
     const info = detectPlatform('https://www.youtube.com/watch?v=dQw4w9WgXcQ');
     expect(info.isValid).toBe(false);
@@ -221,6 +258,10 @@ describe('detectPlatform', () => {
     expect(extractRedditPostId('https://redd.it/xyz987')).toBe('xyz987');
     expect(extractPinterestPinId('https://www.pinterest.com/pin/123456789012')).toBe('123456789012');
     expect(extractPinterestPinId('https://pin.it/Ab12CdEf')).toBe('Ab12CdEf');
+    expect(extractMastodonStatusRef('https://mastodon.social/@alice/123456789012345')?.statusId).toBe(
+      '123456789012345'
+    );
+    expect(extractMastodonStatusRef('https://evilmastodon.social/@alice/123456789012345')).toBeNull();
   });
 
   it('reconnaît uniquement les hôtes Pinterest réels', () => {
@@ -229,6 +270,10 @@ describe('detectPlatform', () => {
     expect(isPinterestHost('pin.it')).toBe(true);
     expect(isPinterestHost('evilpinterest.com')).toBe(false);
     expect(isPinterestHost('pinterest.evil.com')).toBe(false);
+    expect(isMastodonHost('mastodon.social')).toBe(true);
+    expect(isMastodonHost('fosstodon.org')).toBe(true);
+    expect(isMastodonHost('evilmastodon.social')).toBe(false);
+    expect(isMastodonHost('mastodon.social.evil.com')).toBe(false);
   });
 
   it('nomme les plateformes', () => {
@@ -237,6 +282,7 @@ describe('detectPlatform', () => {
     expect(getPlatformName('bluesky')).toBe('Bluesky');
     expect(getPlatformName('reddit')).toBe('Reddit');
     expect(getPlatformName('pinterest')).toBe('Pinterest');
+    expect(getPlatformName('mastodon')).toBe('Mastodon');
     expect(getPlatformName('unknown')).toBe('Inconnu');
   });
 });

@@ -9,6 +9,7 @@ import {
   importHistoryJson,
   loadHistory,
   removeHistoryEntry,
+  sortHistoryEntries,
 } from './history';
 
 const SAFE_URL = 'https://www.instagram.com/p/AbC123xyz/';
@@ -92,6 +93,26 @@ describe('history', () => {
     addHistoryEntry(TIKTOK_URL, 'tiktok');
     expect(filterHistoryEntries(loadHistory(), 'tiktok')).toHaveLength(1);
     expect(filterHistoryEntries(loadHistory(), 'instagram.com')).toHaveLength(1);
+    expect(filterHistoryEntries(loadHistory(), '', { platform: 'tiktok' })).toHaveLength(1);
+    expect(
+      filterHistoryEntries(loadHistory(), '', {
+        favoritesOnly: true,
+        favoriteUrls: [TIKTOK_URL],
+      })
+    ).toHaveLength(1);
+  });
+
+  it('place les favoris en tête', () => {
+    addHistoryEntry(SAFE_URL, 'instagram');
+    addHistoryEntry(TIKTOK_URL, 'tiktok');
+    const sorted = sortHistoryEntries(loadHistory(), [SAFE_URL]);
+    expect(sorted[0].url).toBe(SAFE_URL);
+  });
+
+  it('accepte un statut Mastodon public', () => {
+    const url = 'https://mastodon.social/@alice/123456789012345';
+    addHistoryEntry(url, 'mastodon', 1);
+    expect(loadHistory()[0].platform).toBe('mastodon');
   });
 
   it('déduplique après suppression du tracking', () => {

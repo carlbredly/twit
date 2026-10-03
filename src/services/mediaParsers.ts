@@ -749,3 +749,48 @@ export function parsePinterestPidget(data: unknown): MediaItem[] {
 
   return dedupeMediaItems(items);
 }
+
+function mastodonMediaType(raw: unknown): MediaType | null {
+  if (raw === 'image') return 'image';
+  if (raw === 'gifv') return 'gif';
+  if (raw === 'video') return 'video';
+  return null;
+}
+
+/** Parse a Mastodon /api/v1/statuses/{id} payload (public media only). */
+export function parseMastodonStatus(data: unknown): MediaItem[] {
+  const root = asRecord(data);
+  if (!root) return [];
+
+  const attachments = asArray(root.media_attachments);
+  const items: MediaItem[] = [];
+
+  for (const attachment of attachments) {
+    const record = asRecord(attachment);
+    if (!record) continue;
+    const type = mastodonMediaType(record.type);
+    if (!type) continue;
+
+    const url = toSafeMediaUrl(pickString(record.url, record.remote_url));
+    if (!url) continue;
+
+    const meta = asRecord(record.meta);
+    const original = asRecord(meta?.original) ?? asRecord(meta?.small);
+    const width = typeof original?.width === 'number' ? original.width : undefined;
+    const height = typeof original?.height === 'number' ? original.height : undefined;
+    const thumbnail =
+      toSafeMediaUrl(pickString(record.preview_url, record.preview_remote_url)) ?? undefined;
+
+    items.push({
+      url,
+      type,
+      thumbnail,
+      width,
+      height,
+      quality: type === 'image' ? 'orig' : qualityTag(width, height),
+      label: qualityLabel(type, width, height),
+    });
+  }
+
+  return dedupeMediaItems(items);
+}

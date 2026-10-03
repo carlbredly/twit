@@ -13,6 +13,7 @@ import {
 } from '../utils/security';
 import { downloadBlueskyMedia } from './blueskyService';
 import { downloadInstagramMedia } from './instagramService';
+import { downloadMastodonMedia } from './mastodonService';
 import { downloadPinterestMedia } from './pinterestService';
 import { downloadRedditMedia } from './redditService';
 import { downloadSnapchatMedia } from './snapchatService';
@@ -54,6 +55,8 @@ export const downloadMedia = async (
         return await downloadRedditMedia(validation.url.href, signal);
       case 'pinterest':
         return await downloadPinterestMedia(validation.url.href, signal);
+      case 'mastodon':
+        return await downloadMastodonMedia(validation.url.href, signal);
       default:
         return {
           success: false,

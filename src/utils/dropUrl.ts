@@ -2,7 +2,7 @@ import { detectPlatform } from './linkDetector';
 
 const URL_IN_TEXT = /https?:\/\/[^\s<>"'`]+/gi;
 const BARE_SOCIAL =
-  /(?:(?:www\.|old\.|new\.|np\.|m\.)?(?:instagram|threads|tiktok|snapchat|reddit|pinterest)\.com|(?:vm|vt)\.tiktok\.com|(?:www\.)?(?:twitter|x)\.com|(?:bsky\.app|bsky\.social)|(?:www\.)?pinterest\.[a-z.]+|pin\.it|redd\.it)\/[^\s<>"'`]+/gi;
+  /(?:(?:www\.|old\.|new\.|np\.|m\.)?(?:instagram|threads|tiktok|snapchat|reddit|pinterest)\.com|(?:vm|vt)\.tiktok\.com|(?:www\.)?(?:twitter|x)\.com|(?:bsky\.app|bsky\.social)|(?:www\.)?pinterest\.[a-z.]+|pin\.it|redd\.it|(?:mastodon\.(?:social|online|world|art|cloud)|mstdn\.(?:social|jp)|mas\.to|masto\.ai|fosstodon\.org|hachyderm\.io|infosec\.exchange|piaille\.fr|mamot\.fr))\/[^\s<>"'`]+/gi;
 
 function cleanCandidate(raw: string): string {
   return raw.trim().replace(/[),.;!?]+$/g, '');

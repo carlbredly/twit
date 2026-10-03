@@ -14,7 +14,7 @@ describe('VideoDownloader', () => {
     vi.mocked(readClipboardText).mockReset();
   });
 
-  it('affiche le titre, TikTok, Threads, Bluesky, Reddit et Pinterest', () => {
+  it('affiche le titre, TikTok, Threads, Bluesky, Reddit, Pinterest et Mastodon', () => {
     render(<VideoDownloader />);
     expect(screen.getByRole('heading', { name: /téléchargeur de médias/i })).toBeTruthy();
     expect(screen.getByText('TikTok')).toBeTruthy();
@@ -22,6 +22,7 @@ describe('VideoDownloader', () => {
     expect(screen.getByText('Bluesky')).toBeTruthy();
     expect(screen.getByText('Reddit')).toBeTruthy();
     expect(screen.getByText('Pinterest')).toBeTruthy();
+    expect(screen.getByText('Mastodon')).toBeTruthy();
   });
 
   it('détecte Twitter/X', async () => {
@@ -138,6 +139,27 @@ describe('VideoDownloader', () => {
       'https://www.pinterest.com/pin/123456789012'
     );
     expect(await screen.findByText(/Pinterest détecté/i)).toBeTruthy();
+  });
+
+  it('détecte un statut Mastodon', async () => {
+    const user = userEvent.setup();
+    render(<VideoDownloader />);
+    await user.type(
+      screen.getByLabelText(/lien du média/i),
+      'https://mastodon.social/@alice/123456789012345'
+    );
+    expect(await screen.findByText(/Mastodon détecté/i)).toBeTruthy();
+  });
+
+  it('refuse un lookalike Mastodon', async () => {
+    const user = userEvent.setup();
+    render(<VideoDownloader />);
+    await user.type(
+      screen.getByLabelText(/lien du média/i),
+      'https://evilmastodon.social/@alice/123456789012345'
+    );
+    expect(await screen.findByText(/Plateforme non reconnue/i)).toBeTruthy();
+    expect(screen.getByRole('button', { name: /rechercher le média/i })).toBeDisabled();
   });
 
   it('colle un lien depuis le presse-papiers', async () => {

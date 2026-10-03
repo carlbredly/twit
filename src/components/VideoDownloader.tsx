@@ -16,8 +16,10 @@ import {
   importHistoryJson,
   loadHistory,
   removeHistoryEntry,
+  sortHistoryEntries,
   type HistoryEntry,
 } from '../utils/history';
+import { isFavorite, loadFavoriteUrls, toggleFavorite } from '../utils/favorites';
 import {
   availableMediaFilters,
   filterMediaItems,
@@ -47,6 +49,9 @@ export const VideoDownloader = () => {
   const [theme, setTheme] = useState<Theme>(() => readStoredTheme());
   const [history, setHistory] = useState<HistoryEntry[]>(() => loadHistory());
   const [historyQuery, setHistoryQuery] = useState('');
+  const [historyPlatform, setHistoryPlatform] = useState<Platform | 'all'>('all');
+  const [favoritesOnly, setFavoritesOnly] = useState(false);
+  const [favorites, setFavorites] = useState<string[]>(() => loadFavoriteUrls());
   const [mediaFilter, setMediaFilter] = useState<MediaFilter>('all');
   const [shareMessage, setShareMessage] = useState<string | null>(null);
   const [pasteMessage, setPasteMessage] = useState<string | null>(null);
@@ -63,8 +68,16 @@ export const VideoDownloader = () => {
   const mediaGroups = useMemo(() => groupMediaItems(filteredItems), [filteredItems]);
   const filters = useMemo(() => availableMediaFilters(mediaItems), [mediaItems]);
   const visibleHistory = useMemo(
-    () => filterHistoryEntries(history, historyQuery),
-    [history, historyQuery]
+    () =>
+      sortHistoryEntries(
+        filterHistoryEntries(history, historyQuery, {
+          platform: historyPlatform,
+          favoritesOnly,
+          favoriteUrls: favorites,
+        }),
+        favorites
+      ),
+    [history, historyQuery, historyPlatform, favoritesOnly, favorites]
   );
 
   const applyUrl = (inputUrl: string) => {
@@ -296,7 +309,7 @@ export const VideoDownloader = () => {
     setIsDragOver(false);
     const dropped = extractDroppedUrl(event.dataTransfer);
     if (!dropped) {
-      setPasteMessage('Déposez un lien Instagram, Twitter/X, TikTok, Snapchat, Threads, Bluesky, Reddit ou Pinterest');
+      setPasteMessage('Déposez un lien Instagram, Twitter/X, TikTok, Snapchat, Threads, Bluesky, Reddit, Pinterest ou Mastodon');
       window.setTimeout(() => setPasteMessage(null), 2500);
       return;
     }
@@ -324,7 +337,7 @@ export const VideoDownloader = () => {
             Téléchargeur de Médias
           </h1>
           <p className="text-gray-600 dark:text-gray-400 text-sm sm:text-base">
-            Téléchargez des vidéos, images et GIFs publics depuis Instagram, Twitter/X, Snapchat, TikTok, Threads, Bluesky, Reddit ou Pinterest. Ctrl/⌘+Entrée pour rechercher, Échap pour annuler.
+            Téléchargez des vidéos, images et GIFs publics depuis Instagram, Twitter/X, Snapchat, TikTok, Threads, Bluesky, Reddit, Pinterest ou Mastodon. Ctrl/⌘+Entrée pour rechercher, Échap pour annuler.
           </p>
         </div>
 
@@ -351,7 +364,7 @@ export const VideoDownloader = () => {
               value={url}
               onChange={handleUrlChange}
               aria-label="Lien du média"
-              placeholder="Collez ou déposez un lien… instagram.com/p/… x.com/…/status/… pinterest.com/pin/…"
+              placeholder="Collez ou déposez un lien… instagram.com/p/… x.com/…/status/… mastodon.social/@…/…"
               className="w-full px-4 py-4 pr-40 rounded-xl border-2 border-gray-200 dark:border-gray-700 focus:border-blue-500 focus:outline-none transition-colors bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-white placeholder-gray-400 text-sm sm:text-base"
             />
             <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
@@ -639,40 +652,84 @@ export const VideoDownloader = () => {
               event.target.value = '';
             }}
           />
-          <input
-            type="search"
-            value={historyQuery}
-            onChange={(event) => setHistoryQuery(event.target.value)}
-            placeholder="Filtrer l’historique"
-            aria-label="Filtrer l’historique"
-            className="w-full px-3 py-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900 text-sm"
-          />
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+            <input
+              type="search"
+              value={historyQuery}
+              onChange={(event) => setHistoryQuery(event.target.value)}
+              placeholder="Filtrer l’historique"
+              aria-label="Filtrer l’historique"
+              className="sm:col-span-1 px-3 py-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900 text-sm"
+            />
+            <label className="sr-only" htmlFor="history-platform">
+              Filtrer par plateforme
+            </label>
+            <select
+              id="history-platform"
+              value={historyPlatform}
+              onChange={(event) => setHistoryPlatform(event.target.value as Platform | 'all')}
+              className="px-3 py-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900 text-sm"
+            >
+              <option value="all">Toutes les plateformes</option>
+              <option value="instagram">Instagram</option>
+              <option value="twitter">Twitter/X</option>
+              <option value="snapchat">Snapchat</option>
+              <option value="tiktok">TikTok</option>
+              <option value="threads">Threads</option>
+              <option value="bluesky">Bluesky</option>
+              <option value="reddit">Reddit</option>
+              <option value="pinterest">Pinterest</option>
+              <option value="mastodon">Mastodon</option>
+            </select>
+            <label className="flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-200 dark:border-gray-700 text-sm text-gray-700 dark:text-gray-200">
+              <input
+                type="checkbox"
+                checked={favoritesOnly}
+                onChange={(event) => setFavoritesOnly(event.target.checked)}
+              />
+              Favoris seulement
+            </label>
+          </div>
           {visibleHistory.length === 0 ? (
             <p className="text-sm text-gray-500 dark:text-gray-400">Aucun lien enregistré.</p>
           ) : (
             <ul className="space-y-2">
-              {visibleHistory.map((entry) => (
-                <li
-                  key={entry.id}
-                  className="flex items-center justify-between gap-2 rounded-lg bg-gray-50 dark:bg-gray-900 px-3 py-2"
-                >
-                  <button
-                    type="button"
-                    className="text-left text-sm text-blue-700 dark:text-blue-300 truncate"
-                    onClick={() => applyUrl(entry.url)}
+              {visibleHistory.map((entry) => {
+                const starred = isFavorite(entry.url, favorites);
+                return (
+                  <li
+                    key={entry.id}
+                    className="flex items-center justify-between gap-2 rounded-lg bg-gray-50 dark:bg-gray-900 px-3 py-2"
                   >
-                    {getPlatformIcon(entry.platform)} {entry.url}
-                  </button>
-                  <button
-                    type="button"
-                    aria-label={`Supprimer ${entry.url}`}
-                    onClick={() => setHistory(removeHistoryEntry(entry.id))}
-                    className="text-xs text-red-600"
-                  >
-                    ×
-                  </button>
-                </li>
-              ))}
+                    <button
+                      type="button"
+                      className="text-left text-sm text-blue-700 dark:text-blue-300 truncate"
+                      onClick={() => applyUrl(entry.url)}
+                    >
+                      {getPlatformIcon(entry.platform)} {entry.url}
+                    </button>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <button
+                        type="button"
+                        aria-label={starred ? `Retirer ${entry.url} des favoris` : `Ajouter ${entry.url} aux favoris`}
+                        aria-pressed={starred}
+                        onClick={() => setFavorites(toggleFavorite(entry.url))}
+                        className={`text-sm ${starred ? 'text-amber-500' : 'text-gray-400'}`}
+                      >
+                        {starred ? '★' : '☆'}
+                      </button>
+                      <button
+                        type="button"
+                        aria-label={`Supprimer ${entry.url}`}
+                        onClick={() => setHistory(removeHistoryEntry(entry.id))}
+                        className="text-xs text-red-600"
+                      >
+                        ×
+                      </button>
+                    </div>
+                  </li>
+                );
+              })}
             </ul>
           )}
         </section>
@@ -717,6 +774,11 @@ export const VideoDownloader = () => {
             <div className="text-3xl mb-2">📌</div>
             <div className="font-semibold text-gray-800 dark:text-gray-200 text-sm mb-1">Pinterest</div>
             <div className="text-xs text-gray-600 dark:text-gray-400">Pins et vidéos publics</div>
+          </div>
+          <div className="bg-gradient-to-br from-violet-50 to-indigo-50 dark:from-violet-900/20 dark:to-indigo-900/20 rounded-xl p-4 text-center">
+            <div className="text-3xl mb-2">🐘</div>
+            <div className="font-semibold text-gray-800 dark:text-gray-200 text-sm mb-1">Mastodon</div>
+            <div className="text-xs text-gray-600 dark:text-gray-400">Statuts publics fédérés</div>
           </div>
         </div>
       </div>

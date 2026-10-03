@@ -40,6 +40,12 @@ describe('extractInputUrl', () => {
     expect(extractInputUrl('pin.it/Ab12CdEf')).toBe('pin.it/Ab12CdEf');
   });
 
+  it('extrait un lien Mastodon', () => {
+    expect(extractInputUrl('voir https://mastodon.social/@alice/123456789012345')).toBe(
+      'https://mastodon.social/@alice/123456789012345'
+    );
+  });
+
   it('extrait un hôte nu TikTok', () => {
     expect(extractInputUrl('vm.tiktok.com/ZMabcdefg/')).toBe('vm.tiktok.com/ZMabcdefg/');
   });

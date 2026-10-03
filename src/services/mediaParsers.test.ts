@@ -10,6 +10,7 @@ import {
   parseRedditListing,
   parsePinterestOEmbed,
   parsePinterestPidget,
+  parseMastodonStatus,
   toSafeMediaUrl,
 } from './mediaParsers';
 
@@ -326,5 +327,42 @@ describe('parsePinterestPidget', () => {
     expect(items.some((item) => item.type === 'video' && item.url.endsWith('.mp4'))).toBe(true);
     expect(items.every((item) => !item.url.includes('192.168'))).toBe(true);
     expect(items.every((item) => !item.url.includes('.m3u8'))).toBe(true);
+  });
+});
+
+describe('parseMastodonStatus', () => {
+  it('extrait image et vidéo, ignore audio et hôtes privés', () => {
+    const items = parseMastodonStatus({
+      media_attachments: [
+        {
+          type: 'image',
+          url: 'https://files.mastodon.social/ok.jpg',
+          preview_url: 'https://files.mastodon.social/thumb.jpg',
+          meta: { original: { width: 1200, height: 800 } },
+        },
+        {
+          type: 'gifv',
+          url: 'https://files.mastodon.social/anim.mp4',
+          meta: { original: { width: 400, height: 400 } },
+        },
+        {
+          type: 'video',
+          url: 'http://127.0.0.1/secret.mp4',
+        },
+        {
+          type: 'audio',
+          url: 'https://files.mastodon.social/clip.mp3',
+        },
+        {
+          type: 'image',
+          url: 'javascript:alert(1)',
+        },
+      ],
+    });
+    expect(items).toHaveLength(2);
+    expect(items[0].type).toBe('image');
+    expect(items[0].url).toBe('https://files.mastodon.social/ok.jpg');
+    expect(items[1].type).toBe('gif');
+    expect(items.every((item) => !item.url.includes('127.0.0.1'))).toBe(true);
   });
 });

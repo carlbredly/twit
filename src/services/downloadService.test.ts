@@ -171,6 +171,31 @@ describe('downloadMedia', () => {
     expect(result.mediaItems).toHaveLength(1);
     expect(result.mediaItems?.[0].url).toBe('https://i.pinimg.com/originals/ok.jpg');
   });
+
+  it('route Mastodon vers l’API publique et ignore les médias internes', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        url: 'https://mastodon.social/api/v1/statuses/123456789012345',
+        json: async () => ({
+          media_attachments: [
+            { type: 'image', url: 'https://files.mastodon.social/ok.jpg' },
+            { type: 'image', url: 'http://169.254.169.254/meta.jpg' },
+          ],
+        }),
+      })
+    );
+
+    const result = await downloadMedia(
+      'https://mastodon.social/@alice/123456789012345',
+      'mastodon'
+    );
+    expect(result.success).toBe(true);
+    expect(result.platform).toBe('mastodon');
+    expect(result.mediaItems).toHaveLength(1);
+    expect(result.mediaItems?.[0].url).toBe('https://files.mastodon.social/ok.jpg');
+  });
 });
 
 describe('triggerDownload (ssstwitter-style native download)', () => {

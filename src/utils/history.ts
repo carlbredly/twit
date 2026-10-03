@@ -190,11 +190,42 @@ export function exportHistoryCsv(entries: HistoryEntry[] = loadHistory()): strin
   return [header, ...rows].join('\n');
 }
 
-export function filterHistoryEntries(entries: HistoryEntry[], query: string): HistoryEntry[] {
-  const needle = query.trim().toLowerCase();
-  if (!needle) return entries;
-  return entries.filter(
-    (entry) =>
+export interface HistoryViewOptions {
+  query?: string;
+  platform?: Platform | 'all';
+  favoritesOnly?: boolean;
+  favoriteUrls?: readonly string[];
+}
+
+export function filterHistoryEntries(
+  entries: HistoryEntry[],
+  query: string,
+  options: HistoryViewOptions = {}
+): HistoryEntry[] {
+  const needle = (options.query ?? query).trim().toLowerCase();
+  const platform = options.platform ?? 'all';
+  const favoriteSet = new Set(options.favoriteUrls ?? []);
+  const favoritesOnly = Boolean(options.favoritesOnly);
+
+  return entries.filter((entry) => {
+    if (platform !== 'all' && entry.platform !== platform) return false;
+    if (favoritesOnly && !favoriteSet.has(entry.url)) return false;
+    if (!needle) return true;
+    return (
       entry.url.toLowerCase().includes(needle) || entry.platform.toLowerCase().includes(needle)
-  );
+    );
+  });
+}
+
+export function sortHistoryEntries(
+  entries: HistoryEntry[],
+  favoriteUrls: readonly string[] = []
+): HistoryEntry[] {
+  const favoriteSet = new Set(favoriteUrls);
+  return [...entries].sort((a, b) => {
+    const aFav = favoriteSet.has(a.url) ? 0 : 1;
+    const bFav = favoriteSet.has(b.url) ? 0 : 1;
+    if (aFav !== bFav) return aFav - bFav;
+    return b.createdAt - a.createdAt;
+  });
 }
